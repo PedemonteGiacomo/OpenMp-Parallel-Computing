@@ -1,6 +1,6 @@
 CC      = gcc
-CFLAGS  = -O2 -fopenmp
-LIBS    = -lm          # <-- aggiungi libm
+CFLAGS  = -O3 -march=native -ffast-math -funroll-loops -fopenmp
+LIBS    = -lm
 
 all: grayscale
 

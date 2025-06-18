@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 ###############################################################################
-# bench_and_plot.sh
+# bench_and_plot_monolithic.sh
 # Benchmark monolitico OpenMP + grafici in un colpo solo
-# Uso: ./bench_and_plot.sh <immagine_input> ["1 2 4 8"]
+# Uso: ./bench_and_plot_monolithic.sh <immagine_input> ["1 2 4 8"]
 ###############################################################################
 set -euo pipefail
 
@@ -14,6 +14,7 @@ THREADS=${2:-"1 2 3 4 $PHYS_CORE"}   # default: 1-4 + num core fisici
 OUTDIR="results"                 # directory principale
 IMGDIR="$OUTDIR/images"          # directory immagini per thread
 CSV="$OUTDIR/monolithic_bench.csv"
+CFLAGS="-O3 -march=native -ffast-math -funroll-loops -fopenmp"
 EXE=grayscale
 
 # -------- Crea cartelle ------------------------------------------------------
@@ -22,7 +23,7 @@ mkdir -p "$OUTDIR" "$IMGDIR"
 # -------- Compilazione (se non esiste) ---------------------------------------
 if ! command -v "$EXE" &>/dev/null && [ ! -x ./"$EXE" ]; then
   echo "Compilo $EXE..."
-  gcc -O2 -fopenmp main.c parallel_to_grayscale.c -lm -o "$EXE"
+  gcc $CFLAGS main.c parallel_to_grayscale.c -lm -o "$EXE"
 fi
 
 # -------- Benchmark ----------------------------------------------------------

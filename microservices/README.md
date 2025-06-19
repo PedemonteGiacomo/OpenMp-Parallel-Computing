@@ -31,6 +31,18 @@ You can test this easily with the helper script `grayscale/test_client.py`:
 python3 microservices/grayscale/test_client.py path/to/image.jpg output.png
 ```
 
+
+### Benchmark script
+
+To automate testing with multiple thread counts and runs, use `grayscale/scripts/bench_grayscale_service.sh`.
+It performs repeated requests with the helper client and records average timings in CSV format.
+
+Example:
+```bash
+./microservices/grayscale/scripts/bench_grayscale_service.sh path/to/image.jpg "1 2 4 6" 3 1000
+```
+This runs each thread configuration 3 times with 1000 kernel passes and prints a summary table.
+The CSV is saved under `microservices/grayscale/results/service_bench.csv`.
 The complete process (with all the dependencies to test the microservice with a test_client):
 
 ```bash

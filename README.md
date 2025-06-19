@@ -64,3 +64,9 @@ will work.
    ```
 
 Results and graphs will be available under `monolithic/results/`.
+
+### Verify Physical CPU and Virtual CPU
+  
+  ```bash
+  lscpu | grep -E '^CPU|^Core|^Socket'
+  ```

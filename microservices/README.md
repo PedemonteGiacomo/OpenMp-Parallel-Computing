@@ -43,7 +43,9 @@ Example:
 ```
 This runs each thread configuration 3 times with 1000 kernel passes and prints a summary table.
 The CSV is saved under `microservices/grayscale/results/service_bench.csv`.
-The complete process (with all the dependencies to test the microservice with a test_client):
+
+
+The complete process (with all the dependencies to test the microservice with a test_client) is the following [no bench]:
 
 ```bash
 cd microservices/grayscale

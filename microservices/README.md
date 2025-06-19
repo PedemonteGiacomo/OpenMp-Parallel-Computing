@@ -31,6 +31,17 @@ You can test this easily with the helper script `grayscale/test_client.py`:
 python3 microservices/grayscale/test_client.py path/to/image.jpg output.png
 ```
 
+The complete process (with all the dependencies to test the microservice with a test_client):
+
+```bash
+cd microservices/grayscale
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r client_requirements.txt
+cd ../..
+python3 microservices/grayscale/test_client.py images/more_than_one_mega_photo.jpg output.png
+```
+
 The client requires the `requests` library (`pip install requests`).
 
 The script measures the request time and saves the processed image. Optional parameters

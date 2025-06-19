@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
     unsigned char *img =
         stbi_load(argv[1], &width, &height, &channels, 0);
     if (!img) {
-        fprintf(stderr, "Errore caricando l'immagine \"%s\"\n", argv[1]);
+        fprintf(stderr, "Errore caricando immagine \"%s\"\n", argv[1]);
         return 1;
     }
 

@@ -25,3 +25,15 @@ docker run --rm -p 5000:5000 grayscale-service
 ```
 
 Then POST an image to `http://localhost:5000/grayscale` with multipart form data using the field `image` and the service will return the processed PNG.
+You can test this easily with the helper script `grayscale/test_client.py`:
+
+```bash
+python3 microservices/grayscale/test_client.py path/to/image.jpg output.png
+```
+
+The client requires the `requests` library (`pip install requests`).
+
+The script measures the request time and saves the processed image. Optional parameters
+`--threads=N` and `--passes=N` allow tweaking the OpenMP runtime and the number of kernel
+passes. These values are forwarded to the service which then invokes the underlying binary
+accordingly.

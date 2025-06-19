@@ -27,4 +27,4 @@ The script builds the program if needed and saves results inside
 
 ## Microservices
 
-A new directory `microservices/` shows how the processing algorithms can be exposed as standalone services. The first available service is `grayscale`, which wraps the OpenMP grayscale conversion inside a small Flask application and Docker container. See `microservices/README.md` for details on building and running the container.
+A new directory `microservices/` shows how the processing algorithms can be exposed as standalone services. The first available service is `grayscale`, which wraps the OpenMP grayscale conversion inside a small Flask application and Docker container. See `microservices/README.md` for details on building and running the container and for a small client helper script to test it.

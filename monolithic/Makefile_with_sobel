@@ -1,0 +1,15 @@
+CC      = gcc
+CFLAGS  = -O3 -march=native -ffast-math -funroll-loops -fopenmp
+LIBS    = -lm
+SRC_DIR = src
+INC_DIR = include
+BIN_DIR = bin
+EXE     = $(BIN_DIR)/grayscale
+
+all: $(EXE)
+
+$(EXE): $(SRC_DIR)/main.c $(SRC_DIR)/parallel_to_grayscale.c $(SRC_DIR)/sobel.c
+	$(CC) $(CFLAGS) -I$(INC_DIR) $^ -o $@ $(LIBS)
+
+clean:
+	rm -f $(EXE)

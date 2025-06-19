@@ -12,3 +12,9 @@ This code segment converts a color image into grayscale and calculates the minim
 
 ### Parallel Convolution with Kernel:
 This code segment applies convolution to an image using a specified kernel matrix. The original image is represented as a 3-dimensional array with dimensions DIM_ROW+PAD × DIM_COL+PAD × DIM_RGB, where padding (PAD) is added around the image to accommodate convolution. The convolution operation involves sliding the kernel over the image and computing the element-wise multiplication of the kernel and the corresponding image region, followed by accumulation. OpenMP parallelization is utilized to distribute the convolution computations across multiple threads, effectively accelerating the convolution process.
+
+## Note
+
+The programs in this folder are kept for historical reference. The
+actively maintained implementation and benchmark script live in
+`../monolithic/`.

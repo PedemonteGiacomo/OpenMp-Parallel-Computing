@@ -4,6 +4,8 @@ This folder contains the single-process implementation of the grayscale filter
 and related benchmarks.  Source files are under `src/` and headers in
 `include/`.  Benchmark results are written to `results/`.
 
+## Run without benchmark (compile with openMP flag activated)
+
 To compile manually run:
 
 ```bash
@@ -15,6 +17,8 @@ For the version with Sobel edge detection:
 ```bash
 make -f monolithic/Makefile_with_sobel -C monolithic
 ```
+
+## Benchmark
 
 Alternatively run the benchmarking script:
 

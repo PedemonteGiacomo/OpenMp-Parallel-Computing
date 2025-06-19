@@ -25,6 +25,16 @@ cd monolithic/scripts
 The script builds the program if needed and saves results inside
 `monolithic/results`.
 
+## Microservices
+
+A new directory `microservices/` shows how the processing algorithms can be exposed as standalone services. The first available service is `grayscale`, which wraps the OpenMP grayscale conversion inside a small Flask application and Docker container. See `microservices/README.md` for details on building and running the container and for a small client helper script to test it.
+
+The microservice directory also contains a script to benchmark the service using different thread counts:
+```bash
+./microservices/grayscale/scripts/bench_grayscale_service.sh images/test.jpg "1 2 4 6" 2 1000
+```
+See `microservices/README.md` for details.
+
 ## Running on Windows with WSL
 
 The easiest way to run the project on Windows is through the

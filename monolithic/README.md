@@ -46,5 +46,17 @@ Where each piece represent respectively:
 - number of runs for the thread which is running (to obtain an average result that will give a better perspective since each run is different)
 - number of operations in the kernel: to obtain a more compute-bound algorithm set this parameter to an high value
 
+The complete process to perform correctly the benchmark:
+
+```bash
+cd monolithic/
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt 
+cd ..
+./monolithic/scripts/bench_and_plot_monolithic.sh monolithic/images/test.jpg "1 2 3 4 6" 1 1
+```
+
+### Note
 Running the script creates `monolithic/bin/grayscale` if it does not
 exist and writes CSV data and plots under `monolithic/results/`.

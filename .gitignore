@@ -3,4 +3,6 @@
 **/results/
 **/bin/
 **/grayscale
+!microservices/grayscale
+!microservices/grayscale/**
 **/old

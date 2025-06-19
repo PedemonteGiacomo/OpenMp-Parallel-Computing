@@ -5,23 +5,28 @@
 ###############################################################################
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 IMG=${1:? "Specifica il file immagine, es: test.jpg"}
 PHYS_CORE=$(lscpu | awk '/[Cc]ore/ && /socket/ {print $NF; exit}')
 THREADS=${2:-"1 2 3 4 $PHYS_CORE"}
 RUNS=${3:-10}               # ripetizioni per media
 PASSES=${4:-1}              # ripetizioni del kernel dentro il programma
 
-OUTDIR="results"
+OUTDIR="$BASE_DIR/results"
 IMGDIR="$OUTDIR/images"
 CSV="$OUTDIR/monolithic_bench.csv"
 CFLAGS="-O3 -march=native -ffast-math -funroll-loops -fopenmp"
-EXE=grayscale
+EXE="$BASE_DIR/bin/grayscale"
+SRC_DIR="$BASE_DIR/src"
+INC_DIR="$BASE_DIR/include"
 
-mkdir -p "$OUTDIR" "$IMGDIR"
+mkdir -p "$OUTDIR" "$IMGDIR" "$(dirname "$EXE")"
 
-if ! command -v "$EXE" &>/dev/null && [ ! -x ./"$EXE" ]; then
+if [ ! -x "$EXE" ]; then
   echo "Compilo $EXE..."
-  gcc $CFLAGS main.c parallel_to_grayscale.c -lm -o "$EXE"
+  gcc $CFLAGS -I"$INC_DIR" "$SRC_DIR/main.c" "$SRC_DIR/parallel_to_grayscale.c" -lm -o "$EXE"
 fi
 
 echo "threads,avg_real_sec,std_real_sec,avg_cpu_pct,avg_mem_kb" > "$CSV"
@@ -38,7 +43,7 @@ for t in $THREADS; do
 
     read real cpu mem < <(
       (OMP_NUM_THREADS=$t /usr/bin/time -f "%e %P %M" \
-        ./"$EXE" "$IMG" "$out_img" "$PASSES") 2>&1 >/dev/null
+        "$EXE" "$IMG" "$out_img" "$PASSES") 2>&1 >/dev/null
     )
     cpu=${cpu%\%}
 

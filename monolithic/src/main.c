@@ -20,7 +20,7 @@ int main(int argc, char *argv[]) {
     int width, height, channels;
     unsigned char *img = stbi_load(argv[1], &width, &height, &channels, 0);
     if (!img) {
-        fprintf(stderr, "Errore caricando l'immagine\n");
+        fprintf(stderr, "Errore caricando immagine\n");
         return 1;
     }
 

@@ -24,9 +24,9 @@ cd event-driven
 docker compose up --build
 ```
 
-The frontend will be available on http://localhost:8080.  Upload an image and the
-page will redirect to a status URL which automatically updates once processing
-completes, showing the converted image without needing to refresh.
+The frontend will be available on http://localhost:8080. Upload an image and the
+page will show the original and processed result on the same screen. It polls
+automatically until the conversion finishes so no manual refresh is needed.
 
 The setup is intentionally simple to demonstrate how a client can be completely
 decoupled from a processing microservice by only exchanging messages through the

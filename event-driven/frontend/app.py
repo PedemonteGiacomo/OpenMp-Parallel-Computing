@@ -2,6 +2,7 @@ import io
 import os
 import uuid
 import time
+import threading
 
 from flask import Flask, request, send_file, redirect, url_for, render_template_string
 from minio import Minio
@@ -32,6 +33,27 @@ def connect_rabbitmq(url: str, retries: int = 10, delay: int = 5):
 connection = connect_rabbitmq(os.environ.get('RABBITMQ_URL', 'amqp://guest:guest@localhost:5672/'))
 channel = connection.channel()
 channel.queue_declare(queue='grayscale')
+channel.queue_declare(queue='grayscale_processed')
+
+# dictionary storing processed results indexed by original key
+PROCESSED = {}
+
+def consume_processed():
+    """Background thread consuming completion messages."""
+    proc_connection = connect_rabbitmq(os.environ.get('RABBITMQ_URL', 'amqp://guest:guest@localhost:5672/'))
+    proc_channel = proc_connection.channel()
+    proc_channel.queue_declare(queue='grayscale_processed')
+
+    def cb(ch, method, properties, body):
+        msg = json.loads(body)
+        PROCESSED[msg['image_key']] = msg['processed_key']
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    proc_channel.basic_consume(queue='grayscale_processed', on_message_callback=cb)
+    proc_channel.start_consuming()
+
+# start consumer thread
+threading.Thread(target=consume_processed, daemon=True).start()
 
 app = Flask(__name__)
 
@@ -58,11 +80,10 @@ def index():
 @app.route('/check')
 def check():
     key = request.args['key']
-    processed_key = f"processed/{os.path.basename(key)}"
-    try:
-        response = minio_client.get_object(BUCKET, processed_key)
-    except Exception:
+    processed_key = PROCESSED.get(key)
+    if not processed_key:
         return '<p>Still processing...</p>'
+    response = minio_client.get_object(BUCKET, processed_key)
     return send_file(io.BytesIO(response.read()), mimetype='image/png')
 
 if __name__ == '__main__':

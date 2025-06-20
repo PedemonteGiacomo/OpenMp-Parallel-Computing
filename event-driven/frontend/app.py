@@ -3,8 +3,8 @@ import os
 import uuid
 import time
 import threading
-
 from flask import Flask, request, send_file, render_template_string
+from flask import Flask, request, send_file, redirect, url_for, render_template_string
 from minio import Minio
 import pika
 import json
@@ -51,6 +51,7 @@ def consume_processed():
             'times': msg.get('times', {}),
             'passes': msg.get('passes'),
         }
+        PROCESSED[msg['image_key']] = msg['processed_key']
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     proc_channel.basic_consume(queue='grayscale_processed', on_message_callback=cb)
@@ -143,7 +144,7 @@ PAGE_TEMPLATE = """
       data: { labels: [], datasets: [{ label: 'Speed-up', data: [] }] },
       options: { scales: { y: { beginAtZero: true } } }
     });
-
+  <script>
     async function poll() {
       const res = await fetch('/status?key={{ key }}');
       const data = await res.json();
@@ -164,6 +165,7 @@ PAGE_TEMPLATE = """
           speedChart.data.datasets[0].data.push(base / times[i]);
         });
         speedChart.update();
+        document.getElementById('status').textContent = 'Processed';
         clearInterval(timer);
       }
     }
@@ -202,6 +204,9 @@ def index():
         channel.basic_publish('', 'grayscale', json.dumps(msg).encode())
         return render_template_string(PAGE_TEMPLATE, key=key, threads_val=threads, passes_val=passes, repeat_val=repeat)
     return render_template_string(PAGE_TEMPLATE, key=None, threads_val=[1], passes_val=1, repeat_val=1)
+        channel.basic_publish('', 'grayscale', json.dumps({'image_key': key}).encode())
+        return render_template_string(PAGE_TEMPLATE, key=key)
+    return render_template_string(PAGE_TEMPLATE, key=None)
 
 @app.route('/status')
 def status():
@@ -212,6 +217,10 @@ def status():
     resp = {'processed': True}
     resp.update(info)
     return resp
+    processed_key = PROCESSED.get(key)
+    if not processed_key:
+        return {'processed': False}
+    return {'processed': True, 'processed_key': processed_key}
 
 @app.route('/image/<path:key>')
 def image(key):

@@ -46,7 +46,12 @@ def consume_processed():
 
     def cb(ch, method, properties, body):
         msg = json.loads(body)
-        PROCESSED[msg['image_key']] = msg['processed_key']
+        PROCESSED[msg['image_key']] = {
+            'processed_key': msg['processed_key'],
+            'elapsed': msg.get('elapsed'),
+            'threads': msg.get('threads'),
+            'passes': msg.get('passes'),
+        }
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     proc_channel.basic_consume(queue='grayscale_processed', on_message_callback=cb)
@@ -65,6 +70,7 @@ PAGE_TEMPLATE = """
   <meta name='viewport' content='width=device-width, initial-scale=1'>
   <link href='https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css' rel='stylesheet'>
   <script src='https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js'></script>
+  <script src='/static/chart.min.js'></script>
   <style>
     body { padding-top: 40px; }
     .card-image img { width: 100%; }
@@ -81,6 +87,14 @@ PAGE_TEMPLATE = """
       <div class='file-path-wrapper'>
         <input class='file-path validate' type='text'>
       </div>
+    </div>
+    <div class='input-field'>
+      <input id='threads' type='number' name='threads' min='1' value='1'>
+      <label for='threads'>Threads</label>
+    </div>
+    <div class='input-field'>
+      <input id='passes' type='number' name='passes' min='1' value='1'>
+      <label for='passes'>Kernel passes</label>
     </div>
     <button class='btn waves-effect waves-light' type='submit'>Upload</button>
   </form>
@@ -104,14 +118,31 @@ PAGE_TEMPLATE = """
       </div>
     </div>
   </div>
+  <div class='row'>
+    <div class='col s12'>
+      <canvas id='chart' height='150'></canvas>
+    </div>
+  </div>
   <script>
+    const metrics = [];
+    const ctx = document.getElementById('chart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'bar',
+      data: { labels: [], datasets: [{ label: 'Time (s)', data: [] }] },
+      options: { scales: { y: { beginAtZero: true } } }
+    });
+
     async function poll() {
       const res = await fetch('/status?key={{ key }}');
       const data = await res.json();
       if (data.processed) {
         document.getElementById('processed-img').src = '/image/' + encodeURIComponent(data.processed_key);
         document.getElementById('processed-img').style.display = 'block';
-        document.getElementById('status').textContent = 'Processed';
+        document.getElementById('status').textContent = `Processed in ${data.elapsed.toFixed(3)}s`;
+        metrics.push({threads: data.threads || 1, time: data.elapsed});
+        chart.data.labels.push(data.threads || '1');
+        chart.data.datasets[0].data.push(data.elapsed);
+        chart.update();
         clearInterval(timer);
       }
     }
@@ -129,6 +160,8 @@ def index():
         file = request.files['image']
         if not file:
             return 'no file', 400
+        threads = request.form.get('threads')
+        passes = request.form.get('passes')
         key = f"uploads/{uuid.uuid4().hex}_{file.filename}"
         minio_client.put_object(
             BUCKET,
@@ -138,17 +171,24 @@ def index():
             part_size=10 * 1024 * 1024,
             content_type=file.content_type,
         )
-        channel.basic_publish('', 'grayscale', json.dumps({'image_key': key}).encode())
+        msg = {'image_key': key}
+        if threads:
+            msg['threads'] = int(threads)
+        if passes:
+            msg['passes'] = int(passes)
+        channel.basic_publish('', 'grayscale', json.dumps(msg).encode())
         return render_template_string(PAGE_TEMPLATE, key=key)
     return render_template_string(PAGE_TEMPLATE, key=None)
 
 @app.route('/status')
 def status():
     key = request.args['key']
-    processed_key = PROCESSED.get(key)
-    if not processed_key:
+    info = PROCESSED.get(key)
+    if not info:
         return {'processed': False}
-    return {'processed': True, 'processed_key': processed_key}
+    resp = {'processed': True}
+    resp.update(info)
+    return resp
 
 @app.route('/image/<path:key>')
 def image(key):

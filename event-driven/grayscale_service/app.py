@@ -38,6 +38,9 @@ channel.queue_declare(queue='grayscale_processed')
 def process(ch, method, properties, body):
     msg = json.loads(body)
     image_key = msg['image_key']
+    threads = msg.get('threads')
+    passes = msg.get('passes')
+
     resp = minio_client.get_object(BUCKET, image_key)
     with tempfile.TemporaryDirectory() as tmpdir:
         in_path = os.path.join(tmpdir, os.path.basename(image_key))
@@ -45,15 +48,39 @@ def process(ch, method, properties, body):
             for d in resp.stream(32 * 1024):
                 f.write(d)
         out_path = os.path.join(tmpdir, 'out.png')
-        subprocess.run([BINARY_PATH, in_path, out_path], check=True)
+
+        cmd = [BINARY_PATH, in_path, out_path]
+        if passes:
+            cmd.append(str(passes))
+        env = os.environ.copy()
+        if threads:
+            env['OMP_NUM_THREADS'] = str(threads)
+
+        start = time.time()
+        subprocess.run(cmd, check=True, env=env)
+        elapsed = time.time() - start
+
         with open(out_path, 'rb') as outf:
             data = outf.read()
+
     processed_key = f"processed/{os.path.basename(image_key)}"
-    minio_client.put_object(BUCKET, processed_key, io.BytesIO(data), length=len(data), content_type='image/png')
+    minio_client.put_object(
+        BUCKET,
+        processed_key,
+        io.BytesIO(data),
+        length=len(data),
+        content_type='image/png'
+    )
     channel.basic_publish(
         '',
         'grayscale_processed',
-        json.dumps({'image_key': image_key, 'processed_key': processed_key}).encode(),
+        json.dumps({
+            'image_key': image_key,
+            'processed_key': processed_key,
+            'elapsed': elapsed,
+            'threads': threads,
+            'passes': passes,
+        }).encode(),
     )
     ch.basic_ack(delivery_tag=method.delivery_tag)
 

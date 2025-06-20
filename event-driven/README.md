@@ -29,6 +29,11 @@ The frontend will be available on http://localhost:8080. Upload an image and the
 page will show the original and processed result on the same screen. It polls
 automatically until the conversion finishes so no manual refresh is needed.
 
+Below the images a small chart shows the processing time reported by the worker.
+You can tweak the number of OpenMP threads and the number of kernel passes using
+the form fields before uploading. Each completed job adds a bar to the graph so
+it's easy to benchmark different configurations.
+
 The setup is intentionally simple to demonstrate how a client can be completely
 decoupled from a processing microservice by only exchanging messages through the
 queue and storing payloads in object storage.

@@ -3,8 +3,9 @@
 This folder contains a minimal example of using an event driven architecture with
 RabbitMQ and MinIO.  A frontend service publishes image processing jobs on a
 message queue.  The `grayscale_service` subscribes to these events, downloads the
-referenced image from object storage, converts it to grayscale and uploads the
-result under a `processed/` prefix.  When running the full stack a user can
+referenced image from object storage, converts it to grayscale using the same
+OpenMP implementation as the standalone `microservices/grayscale` service and
+uploads the result under a `processed/` prefix.  When running the full stack a user can
 upload an image via the frontend and later retrieve the processed image.
 
 ## Components

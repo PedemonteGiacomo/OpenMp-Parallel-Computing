@@ -51,6 +51,7 @@ def consume_processed():
             'times': msg.get('times', {}),
             'passes': msg.get('passes'),
         }
+    .chart-container { height: 300px; }
         PROCESSED[msg['image_key']] = msg['processed_key']
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
@@ -100,13 +101,21 @@ PAGE_TEMPLATE = """
       <label for='repeat'>Runs per thread</label>
     </div>
     <div class='input-field'>
-      <input id='passes' type='number' name='passes' min='1' value='{{passes_val}}'>
-      <label for='passes'>Kernel passes</label>
+    <div class='col s12 m6 chart-container'>
+      <canvas id='timeChart'></canvas>
     </div>
-    <button class='btn waves-effect waves-light' type='submit'>Upload</button>
-  </form>
-
-  {% if key %}
+    <div class='col s12 m6 chart-container'>
+      <canvas id='speedChart'></canvas>
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { y: { beginAtZero: true } }
+      }
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { y: { beginAtZero: true } }
+      }
   <div class='row'>
     <div class='col s12 m6'>
       <div class='card z-depth-2'>

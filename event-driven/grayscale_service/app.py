@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import time
 
 from PIL import Image
 from minio import Minio
@@ -18,7 +19,16 @@ minio_client = Minio(
 if not minio_client.bucket_exists(BUCKET):
     minio_client.make_bucket(BUCKET)
 
-connection = pika.BlockingConnection(pika.URLParameters(os.environ.get('RABBITMQ_URL', 'amqp://guest:guest@localhost:5672/')))
+def connect_rabbitmq(url: str, retries: int = 10, delay: int = 5):
+    for i in range(retries):
+        try:
+            return pika.BlockingConnection(pika.URLParameters(url))
+        except pika.exceptions.AMQPConnectionError:
+            print(f"Waiting for RabbitMQ... ({i + 1}/{retries})")
+            time.sleep(delay)
+    raise RuntimeError("Could not connect to RabbitMQ")
+
+connection = connect_rabbitmq(os.environ.get('RABBITMQ_URL', 'amqp://guest:guest@localhost:5672/'))
 channel = connection.channel()
 channel.queue_declare(queue='grayscale')
 channel.queue_declare(queue='grayscale_processed')

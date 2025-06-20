@@ -65,6 +65,26 @@ UPLOAD_FORM = """
 </form>
 """
 
+CHECK_PAGE = """
+<h1>Processing image...</h1>
+<div id='status'>Waiting for result...</div>
+<img id='result' style='display:none;'>
+<script>
+async function poll() {
+  const res = await fetch('/status?key={{ key }}');
+  const data = await res.json();
+  if (data.processed) {
+    document.getElementById('result').src = '/image/' + encodeURIComponent(data.processed_key);
+    document.getElementById('result').style.display = 'block';
+    document.getElementById('status').textContent = 'Done!';
+    clearInterval(timer);
+  }
+}
+const timer = setInterval(poll, 2000);
+poll();
+</script>
+"""
+
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
@@ -80,10 +100,19 @@ def index():
 @app.route('/check')
 def check():
     key = request.args['key']
+    return render_template_string(CHECK_PAGE, key=key)
+
+@app.route('/status')
+def status():
+    key = request.args['key']
     processed_key = PROCESSED.get(key)
     if not processed_key:
-        return '<p>Still processing...</p>'
-    response = minio_client.get_object(BUCKET, processed_key)
+        return {'processed': False}
+    return {'processed': True, 'processed_key': processed_key}
+
+@app.route('/image/<path:key>')
+def image(key):
+    response = minio_client.get_object(BUCKET, key)
     return send_file(io.BytesIO(response.read()), mimetype='image/png')
 
 if __name__ == '__main__':

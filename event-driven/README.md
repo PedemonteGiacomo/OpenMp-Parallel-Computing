@@ -25,8 +25,8 @@ docker compose up --build
 ```
 
 The frontend will be available on http://localhost:8080.  Upload an image and the
-page will redirect to a status URL.  Once processing finishes the converted image
-will be displayed.
+page will redirect to a status URL which automatically updates once processing
+completes, showing the converted image without needing to refresh.
 
 The setup is intentionally simple to demonstrate how a client can be completely
 decoupled from a processing microservice by only exchanging messages through the

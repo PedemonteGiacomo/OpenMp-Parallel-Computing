@@ -51,7 +51,7 @@ def consume_processed():
             'times': msg.get('times', {}),
             'passes': msg.get('passes'),
         }
-    .chart-container { height: 300px; }
+PAGE_TEMPLATE = '''
         PROCESSED[msg['image_key']] = msg['processed_key']
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
@@ -157,7 +157,7 @@ PAGE_TEMPLATE = """
     async function poll() {
       const res = await fetch('/status?key={{ key }}');
       const data = await res.json();
-      if (data.processed) {
+'''
         document.getElementById('processed-img').src = '/image/' + encodeURIComponent(data.processed_key);
         document.getElementById('processed-img').style.display = 'block';
         document.getElementById('status').textContent = 'Done';

@@ -73,17 +73,19 @@ def process(ch, method, properties, body):
         processed_key,
         io.BytesIO(data),
         length=len(data),
-        content_type='image/png'
+        content_type='image/png',
     )
+
+    payload = {
+        'image_key': image_key,
+        'processed_key': processed_key,
+        'times': times,
+        'passes': passes,
+    }
     channel.basic_publish(
-        '',
-        'grayscale_processed',
-        json.dumps({
-            'image_key': image_key,
-            'processed_key': processed_key,
-            'times': times,
-            'passes': passes,
-        }).encode(),
+        exchange='',
+        routing_key='grayscale_processed',
+        body=json.dumps(payload).encode(),
         subprocess.run([BINARY_PATH, in_path, out_path], check=True)
         with open(out_path, 'rb') as outf:
             data = outf.read()

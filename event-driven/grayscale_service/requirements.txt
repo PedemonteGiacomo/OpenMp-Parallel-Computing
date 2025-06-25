@@ -1,2 +1,3 @@
 pika
 minio
+prometheus_client

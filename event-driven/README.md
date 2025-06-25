@@ -41,6 +41,27 @@ The setup is intentionally simple to demonstrate how a client can be completely
 decoupled from a processing microservice by only exchanging messages through the
 queue and storing payloads in object storage.
 
+## Metrics
+
+Both the frontend and the worker expose Prometheus metrics. When the stack is
+running you can scrape:
+
+- <http://localhost:8000/metrics> for frontend timings
+- <http://localhost:8001/> for worker metrics
+
+The metrics record queue wait time, processing duration and overall request
+latency so you can compare local runs with cloud deployments.
+
+## Load testing
+
+The `scripts/load_test.py` helper submits many images to the frontend and waits
+for the processed results. It measures latency for each request and prints a
+summary table.
+
+```
+python3 scripts/load_test.py images/test.jpg --count 100 --concurrency 10
+```
+
 ## Architecture overview
 
 ```

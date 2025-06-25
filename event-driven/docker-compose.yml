@@ -23,6 +23,8 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    ports:
+      - "8001:8001"
     depends_on:
       - rabbitmq
       - minio
@@ -30,6 +32,7 @@ services:
     build: ./frontend
     ports:
       - "8080:5000"
+      - "8000:8000"
     environment:
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minioadmin

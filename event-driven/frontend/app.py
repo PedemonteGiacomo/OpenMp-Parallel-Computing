@@ -7,6 +7,7 @@ from flask import Flask, request, send_file, render_template_string
 from minio import Minio
 import pika
 import json
+from prometheus_client import Histogram, Counter, start_http_server, generate_latest, CONTENT_TYPE_LATEST
 
 BUCKET = 'images'
 
@@ -37,6 +38,14 @@ channel.queue_declare(queue='grayscale_processed')
 # dictionary storing processed results indexed by original key
 PROCESSED = {}
 
+# Prometheus metrics
+REQUEST_TIME = Histogram('frontend_request_seconds', 'Time from upload to result')
+PUBLISH_COUNT = Counter('frontend_publish_total', 'Messages published to the queue')
+PROCESSED_COUNT = Counter('frontend_processed_total', 'Messages processed notification received')
+
+# expose metrics on port 8000
+start_http_server(8000)
+
 def consume_processed():
     """Background thread consuming completion messages."""
     proc_connection = connect_rabbitmq(os.environ.get('RABBITMQ_URL', 'amqp://guest:guest@localhost:5672/'))
@@ -45,11 +54,16 @@ def consume_processed():
 
     def cb(ch, method, properties, body):
         msg = json.loads(body)
-        PROCESSED[msg['image_key']] = {
+        info = PROCESSED.get(msg['image_key'], {})
+        info.update({
             'processed_key': msg['processed_key'],
             'times': msg.get('times', {}),
             'passes': msg.get('passes'),
-        }
+        })
+        if 'start_ts' in info:
+            REQUEST_TIME.observe(time.time() - info['start_ts'])
+        PROCESSED[msg['image_key']] = info
+        PROCESSED_COUNT.inc()
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     proc_channel.basic_consume(queue='grayscale_processed', on_message_callback=cb)
@@ -295,11 +309,15 @@ def index():
             part_size=10 * 1024 * 1024,
             content_type=file.content_type,
         )
+        start_ts = time.time()
         msg = {
             'image_key': key,
             'threads': threads,
-            'repeat': int(repeat)
+            'repeat': int(repeat),
+            'sent_ts': start_ts
         }
+        PROCESSED[key] = {'start_ts': start_ts}
+        PUBLISH_COUNT.inc()
         channel.basic_publish('', 'grayscale', json.dumps(msg).encode())
         return render_template_string(PAGE_TEMPLATE, key=key, threads_val=threads, repeat_val=repeat)
     return render_template_string(PAGE_TEMPLATE, key=None, threads_val=[1], repeat_val=1)
@@ -318,6 +336,10 @@ def status():
 def image(key):
     response = minio_client.get_object(BUCKET, key)
     return send_file(io.BytesIO(response.read()), mimetype='image/png')
+
+@app.route('/metrics')
+def metrics():
+    return generate_latest(), 200, {'Content-Type': CONTENT_TYPE_LATEST}
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

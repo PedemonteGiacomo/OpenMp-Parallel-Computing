@@ -86,15 +86,6 @@ def process(ch, method, properties, body):
         exchange='',
         routing_key='grayscale_processed',
         body=json.dumps(payload).encode(),
-        subprocess.run([BINARY_PATH, in_path, out_path], check=True)
-        with open(out_path, 'rb') as outf:
-            data = outf.read()
-    processed_key = f"processed/{os.path.basename(image_key)}"
-    minio_client.put_object(BUCKET, processed_key, io.BytesIO(data), length=len(data), content_type='image/png')
-    channel.basic_publish(
-        '',
-        'grayscale_processed',
-        json.dumps({'image_key': image_key, 'processed_key': processed_key}).encode(),
     )
     ch.basic_ack(delivery_tag=method.delivery_tag)
 

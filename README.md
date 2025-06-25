@@ -86,6 +86,8 @@ flowchart LR
     RabbitMQ --> FE
 ```
 
+Note that a further better implementation should have the microservices having their own database.
+
 ## Microservices
 
 A new directory `microservices/` shows how the processing algorithms can be exposed as standalone services. The first available service is `grayscale`, which wraps the OpenMP grayscale conversion inside a small Flask application and Docker container. See `microservices/README.md` for details on building and running the container and for a small client helper script to test it.

@@ -68,7 +68,7 @@ generate latency graphs install `matplotlib` and use
 
 ```bash
 pip install requests matplotlib --user
-python3 scripts/benchmark_plot.py images/test.jpg
+python3 benchmark_plot.py images/test.jpg
 ```
 
 ## Architecture overview

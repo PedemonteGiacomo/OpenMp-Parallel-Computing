@@ -62,6 +62,15 @@ summary table.
 python3 scripts/load_test.py images/test.jpg --count 100 --concurrency 10
 ```
 
+To run the same test across multiple request counts and automatically
+generate latency graphs install `matplotlib` and use
+`scripts/benchmark_plot.py`:
+
+```bash
+pip install requests matplotlib --user
+python3 scripts/benchmark_plot.py images/test.jpg
+```
+
 ## Architecture overview
 
 ```

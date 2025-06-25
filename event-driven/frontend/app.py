@@ -326,7 +326,8 @@ def index():
 def status():
     key = request.args['key']
     info = PROCESSED.get(key)
-    if not info:
+    if not info or 'processed_key' not in info:
+        # Either no entry yet or processing not completed
         return {'processed': False}
     resp = {'processed': True}
     resp.update(info)

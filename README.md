@@ -1,29 +1,90 @@
 # OpenMP Image Processing
 
-This repository contains experiments with OpenMP for image processing.  The
-original examples from the upstream repository are kept in `old/` while the
-`monolithic/` directory holds a refactored version that performs the grayscale
-conversion in place.
+This project demonstrates how a small OpenMP kernel can evolve from a single
+program into a set of microservices connected through a message queue.  The
+repository documents each step of this journey from **monolithic** code to a
+minimal **event-driven** architecture.
 
-```
-monolithic/
-  src/       # C sources
-  include/   # headers
-  images/    # sample images
-  bin/       # compiled binaries (ignored by git)
-  results/   # benchmark outputs
-  scripts/   # helper scripts
+## Repository layout
+
+```text
+monolithic/     – single process version with benchmarks
+microservices/  – HTTP service exposing the algorithm
+event-driven/   – RabbitMQ + MinIO stack with frontend and worker
+old/            – historic experiments kept for reference
+images/         – sample pictures used in the examples
 ```
 
-Use the helper script to compile and benchmark the monolithic program:
+Each folder contains a README with more details. Below is a quick summary of how
+to launch every stage.
+
+### Running the monolithic program
 
 ```bash
-cd monolithic/scripts
-./bench_and_plot_monolithic.sh ../images/test.jpg
+cd monolithic
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+./scripts/bench_and_plot_monolithic.sh images/test.jpg "1 2 4 6" 1 1
 ```
 
-The script builds the program if needed and saves results inside
-`monolithic/results`.
+### Running the microservice
+
+```bash
+cd microservices/grayscale
+docker build -t grayscale-service .
+docker run --rm -p 5000:5000 grayscale-service
+```
+
+Send a POST request to `http://localhost:5000/grayscale` (see
+`microservices/README.md` for a helper client).
+
+### Running the event-driven stack
+
+```bash
+cd event-driven
+docker compose up --build
+```
+
+Open <http://localhost:8080> and upload an image. The frontend publishes a job
+on RabbitMQ and the worker stores the processed result in MinIO.
+
+## Architecture transition
+
+The repository illustrates how the original single binary evolves into a
+decoupled system. The diagrams below summarise the three stages.
+
+### Monolithic
+
+```mermaid
+flowchart LR
+    A[User/Script] --> B[Monolithic executable]
+```
+
+### Generic event-driven microservices
+
+```mermaid
+flowchart LR
+    Client --> MQ((Message Queue))
+    Worker1 --> MQ
+    Worker2 --> MQ
+    Client -- upload/download --> Storage[(Object Storage)]
+    Worker1 -- read/write --> Storage
+    Worker2 -- read/write --> Storage
+```
+
+### This repository (event-driven folder)
+
+```mermaid
+flowchart LR
+    User --> FE[Frontend]
+    FE -->|publish job| RabbitMQ((RabbitMQ))
+    FE -->|upload image| MinIO[(MinIO)]
+    RabbitMQ --> GS[grayscale_service]
+    GS -->|download/upload| MinIO
+    GS -->|notify| RabbitMQ
+    RabbitMQ --> FE
+```
 
 ## Microservices
 

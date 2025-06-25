@@ -17,17 +17,16 @@ upload an image via the frontend and later retrieve the processed image.
 
 ## Running locally
 
-The included `docker-compose.yml` spins up all services.  Ensure Docker is
-installed then run:
+1. Build and start the stack
 
-```bash
-cd event-driven
-docker compose up --build
-```
+   ```bash
+   cd event-driven
+   docker compose up --build
+   ```
 
-The frontend will be available on http://localhost:8080. Upload an image and the
-page will show the original and processed result on the same screen. It polls
-automatically until the conversion finishes so no manual refresh is needed.
+2. Open <http://localhost:8080> and upload an image. The page shows both the
+   original and processed version and automatically refreshes until the job
+   completes.
 
 Below the images two charts summarize performance. Before uploading you can pick
 one or more thread counts (1, 2, 4 or 6), the number of kernel passes and how

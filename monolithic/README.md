@@ -18,6 +18,16 @@ sudo apt install build-essential time python3 python3-pip \
 These packages provide `gcc`, `make`, `/usr/bin/time` and the Python
 libraries used by the benchmarking script.
 
+## Quick start
+
+```bash
+cd monolithic
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+./scripts/bench_and_plot_monolithic.sh images/test.jpg "1 2 3 4 6" 1 1
+```
+
 ## Run without benchmark (compile with openMP flag activated)
 
 To compile manually run:

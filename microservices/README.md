@@ -16,20 +16,26 @@ microservices/
       Makefile        # builds bin/grayscale
 ```
 
+## Quick start
+
 Run the service locally with Docker:
 
-```bash
-cd microservices/grayscale
-docker build -t grayscale-service .
-docker run --rm -p 5000:5000 grayscale-service
-```
+1. Build and start the container
 
-Then POST an image to `http://localhost:5000/grayscale` with multipart form data using the field `image` and the service will return the processed PNG.
-You can test this easily with the helper script `grayscale/test_client.py`:
+   ```bash
+   cd microservices/grayscale
+   docker build -t grayscale-service .
+   docker run --rm -p 5000:5000 grayscale-service
+   ```
 
-```bash
-python3 microservices/grayscale/test_client.py path/to/image.jpg output.png
-```
+2. Send an image to the service
+
+   ```bash
+   python3 microservices/grayscale/test_client.py path/to/image.jpg output.png
+   ```
+
+   The service accepts a POST request to `/grayscale` with the file field `image`
+   and returns the processed PNG.
 
 
 ### Benchmark script

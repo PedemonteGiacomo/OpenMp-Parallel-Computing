@@ -29,6 +29,15 @@ The frontend will be available on http://localhost:8080. Upload an image and the
 page will show the original and processed result on the same screen. It polls
 automatically until the conversion finishes so no manual refresh is needed.
 
+Below the images two charts summarize performance. Before uploading you can pick
+one or more thread counts (1, 2, 4 or 6), the number of kernel passes and how
+many times each configuration should run. The worker executes the OpenMP kernel
+with every selected thread count, averaging the specified number of runs. The
+frontend keeps your choices on screen after submission and plots both the
+execution time and the resulting speed‑up for each thread count. Each chart is
+rendered inside a fixed-size container so that interacting (e.g. zooming or
+toggling datasets) does not collapse or shrink the canvas.
+
 The setup is intentionally simple to demonstrate how a client can be completely
 decoupled from a processing microservice by only exchanging messages through the
 queue and storing payloads in object storage.

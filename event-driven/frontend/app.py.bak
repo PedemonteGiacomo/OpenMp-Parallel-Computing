@@ -4,6 +4,7 @@ import uuid
 import time
 import threading
 from flask import Flask, request, send_file, render_template_string
+from flask import Flask, request, send_file, redirect, url_for, render_template_string
 from minio import Minio
 import pika
 import json
@@ -128,149 +129,43 @@ PAGE_TEMPLATE = """
     </div>
   </div>
   <script>
-    // Initialize the charts with default configuration
     const timeChart = new Chart(document.getElementById('timeChart'), {
       type: 'bar',
-      data: { 
-        labels: [], 
-        datasets: [{ 
-          label: 'Time (s)', 
-          data: [],
-          backgroundColor: 'rgba(54, 162, 235, 0.7)',
-          borderColor: 'rgba(54, 162, 235, 1)',
-          borderWidth: 1
-        }] 
-      },
-      options: { 
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: {
-          duration: 500
-        },
-        scales: { 
-          y: { 
-            beginAtZero: true,
-            title: {
-              display: true,
-              text: 'Time (seconds)'
-            }
-          },
-          x: {
-            title: {
-              display: true,
-              text: 'Number of Threads'
-            }
-          }
-        },
-        plugins: {
-          legend: {
-            display: true,
-            position: 'top',
-          },
-          tooltip: {
-            mode: 'index',
-            intersect: false,
-          }
-        }
-      }
+      data: { labels: [], datasets: [{ label: 'Time (s)', data: [] }] },
+      options: { scales: { y: { beginAtZero: true } } }
     });
-    
     const speedChart = new Chart(document.getElementById('speedChart'), {
       type: 'bar',
-      data: { 
-        labels: [], 
-        datasets: [{ 
-          label: 'Speed-up', 
-          data: [],
-          backgroundColor: 'rgba(75, 192, 192, 0.7)',
-          borderColor: 'rgba(75, 192, 192, 1)',
-          borderWidth: 1
-        }] 
-      },
-      options: { 
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: {
-          duration: 500
-        },
-        scales: { 
-          y: { 
-            beginAtZero: true,
-            title: {
-              display: true,
-              text: 'Speed-up Factor'
-            }
-          },
-          x: {
-            title: {
-              display: true,
-              text: 'Number of Threads'
-            }
-          }
-        },
-        plugins: {
-          legend: {
-            display: true,
-            position: 'top',
-          },
-          tooltip: {
-            mode: 'index',
-            intersect: false,
-          }
-        }
-      }
+      data: { labels: [], datasets: [{ label: 'Speed-up', data: [] }] },
+      options: { scales: { y: { beginAtZero: true } } }
     });
-    
-    let hasProcessed = false; // Flag to track if we've already processed data
     
     async function poll() {
       const res = await fetch('/status?key={{ key }}');
       const data = await res.json();
-      
-      if (data.processed && !hasProcessed) {
-        // Only update the charts once when data is available
-        hasProcessed = true;
-        
+      if (data.processed) {
+"""
         document.getElementById('processed-img').src = '/image/' + encodeURIComponent(data.processed_key);
         document.getElementById('processed-img').style.display = 'block';
-        document.getElementById('status').textContent = 'Processing complete';
-        
-        // Get thread numbers in ascending order
-        const threads = Object.keys(data.times)
-          .map(t => parseInt(t))
-          .sort((a, b) => a - b);
-        
-        // Get execution times for each thread count
+        document.getElementById('status').textContent = 'Done';
+        const threads = Object.keys(data.times).map(t => parseInt(t)).sort((a,b)=>a-b);
         const times = threads.map(t => data.times[t]);
-        
-        // Calculate base time (single thread or lowest thread count)
-        const base = times[0];
-        
-        // Calculate speedup for each thread count
-        const speedups = times.map(time => base / time);
-        
-        // Update time chart
-        timeChart.data.labels = threads.map(t => t.toString());
-        timeChart.data.datasets[0].data = times;
+        threads.forEach((t,i) => {
+          timeChart.data.labels.push(t.toString());
+          timeChart.data.datasets[0].data.push(times[i]);
+        });
         timeChart.update();
-        
-        // Update speedup chart
-        speedChart.data.labels = threads.map(t => t.toString());
-        speedChart.data.datasets[0].data = speedups;
+        const base = times[0];
+        threads.forEach((t,i) => {
+          speedChart.data.labels.push(t.toString());
+          speedChart.data.datasets[0].data.push(base / times[i]);
+        });
         speedChart.update();
-        
-        // Stop polling since we've received and processed the data
+        document.getElementById('status').textContent = 'Processed';
         clearInterval(timer);
-      } else if (!data.processed) {
-        // Update status while waiting
-        document.getElementById('status').textContent = 'Processing... (polling for results)';
       }
     }
-    
-    // Poll every 2 seconds
     const timer = setInterval(poll, 2000);
-    
-    // Initial poll
     poll();
   </script>
   {% endif %}
@@ -285,6 +180,7 @@ def index():
         if not file:
             return 'no file', 400
         threads = [int(t) for t in request.form.getlist('threads')] or [1]
+        passes = request.form.get('passes') or '1'
         repeat = request.form.get('repeat') or '1'
         key = f"uploads/{uuid.uuid4().hex}_{file.filename}"
         minio_client.put_object(
@@ -298,11 +194,15 @@ def index():
         msg = {
             'image_key': key,
             'threads': threads,
+            'passes': int(passes),
             'repeat': int(repeat)
         }
         channel.basic_publish('', 'grayscale', json.dumps(msg).encode())
-        return render_template_string(PAGE_TEMPLATE, key=key, threads_val=threads, repeat_val=repeat)
-    return render_template_string(PAGE_TEMPLATE, key=None, threads_val=[1], repeat_val=1)
+        return render_template_string(PAGE_TEMPLATE, key=key, threads_val=threads, passes_val=passes, repeat_val=repeat)
+    return render_template_string(PAGE_TEMPLATE, key=None, threads_val=[1], passes_val=1, repeat_val=1)
+        channel.basic_publish('', 'grayscale', json.dumps({'image_key': key}).encode())
+        return render_template_string(PAGE_TEMPLATE, key=key)
+    return render_template_string(PAGE_TEMPLATE, key=None)
 
 @app.route('/status')
 def status():
@@ -313,6 +213,10 @@ def status():
     resp = {'processed': True}
     resp.update(info)
     return resp
+    processed_key = PROCESSED.get(key)
+    if not processed_key:
+        return {'processed': False}
+    return {'processed': True, 'processed_key': processed_key}
 
 @app.route('/image/<path:key>')
 def image(key):

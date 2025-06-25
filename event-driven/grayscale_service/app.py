@@ -38,6 +38,11 @@ channel.queue_declare(queue='grayscale_processed')
 def process(ch, method, properties, body):
     msg = json.loads(body)
     image_key = msg['image_key']
+    threads = msg.get('threads') or [1]
+    if isinstance(threads, int):
+        threads = [threads]
+    passes = msg.get('passes')
+    repeats = int(msg.get('repeat', 1))
     resp = minio_client.get_object(BUCKET, image_key)
     with tempfile.TemporaryDirectory() as tmpdir:
         in_path = os.path.join(tmpdir, os.path.basename(image_key))
@@ -45,15 +50,42 @@ def process(ch, method, properties, body):
             for d in resp.stream(32 * 1024):
                 f.write(d)
         out_path = os.path.join(tmpdir, 'out.png')
-        subprocess.run([BINARY_PATH, in_path, out_path], check=True)
+        times = {}
+        for t in threads:
+            env = os.environ.copy()
+            env['OMP_NUM_THREADS'] = str(t)
+            single = []
+            for _ in range(repeats):
+                cmd = [BINARY_PATH, in_path, out_path]
+                if passes:
+                    cmd.append(str(passes))
+                start = time.time()
+                subprocess.run(cmd, check=True, env=env)
+                single.append(time.time() - start)
+            times[str(t)] = sum(single) / len(single)
+
         with open(out_path, 'rb') as outf:
             data = outf.read()
+
     processed_key = f"processed/{os.path.basename(image_key)}"
-    minio_client.put_object(BUCKET, processed_key, io.BytesIO(data), length=len(data), content_type='image/png')
+    minio_client.put_object(
+        BUCKET,
+        processed_key,
+        io.BytesIO(data),
+        length=len(data),
+        content_type='image/png',
+    )
+
+    payload = {
+        'image_key': image_key,
+        'processed_key': processed_key,
+        'times': times,
+        'passes': passes,
+    }
     channel.basic_publish(
-        '',
-        'grayscale_processed',
-        json.dumps({'image_key': image_key, 'processed_key': processed_key}).encode(),
+        exchange='',
+        routing_key='grayscale_processed',
+        body=json.dumps(payload).encode(),
     )
     ch.basic_ack(delivery_tag=method.delivery_tag)
 

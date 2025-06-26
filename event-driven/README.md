@@ -380,21 +380,31 @@ Common issues and solutions:
    - Solution: The system now has error reporting between services. When the grayscale service encounters an error during processing, it sends an error message via RabbitMQ, which is displayed in the frontend.
    - Check logs with `docker-compose logs grayscale_service` to see detailed error information
 
-7. **RabbitMQ Missed Heartbeats**
-   - Symptoms: Error message `missed heartbeats from client, timeout: 180s`, connection drops between services and RabbitMQ
-   - Solution: The system now implements robust heartbeat handling:
+7. **RabbitMQ Missed Heartbeats and Connection Issues**
+   - Symptoms: 
+     - Error message `missed heartbeats from client, timeout: 180s`
+     - Error message `pop from an empty deque` in Pika
+     - Connection drops between services and RabbitMQ
+     - `'NoneType' object has no attribute` errors
+   - Solution: The system now implements robust heartbeat and connection handling:
      ```
      1. Reduced heartbeat interval from 180s to 30s
-     2. Added background heartbeat thread that processes events every 15s
+     2. Added background heartbeat thread that processes events every 15s with timeout protection
      3. Implemented automatic reconnection with exponential backoff
      4. Enhanced error handling in both frontend and backend services
+     5. Added TCP optimizations (TCP_NODELAY, keepalive, etc.)
+     6. Implemented better connection lifecycle management
+     7. Added container auto-restart policies
      ```
-   - If issues persist, you can manually increase the heartbeat frequency:
+   - If issues persist, you can manually increase the heartbeat frequency or restart the services:
      ```bash
-     # Edit docker-compose.yml to adjust the RabbitMQ heartbeat settings
-     # Then restart the services
+     # Restart the services in the correct order
      docker-compose down
-     docker-compose up -d
+     docker-compose up -d rabbitmq minio
+     sleep 5
+     docker-compose up -d grayscale_service
+     sleep 3
+     docker-compose up -d frontend
      ```
 
 ## Adding New Processing Services

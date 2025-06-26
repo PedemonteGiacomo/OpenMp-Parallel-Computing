@@ -18,7 +18,19 @@ services:
       - "15672:15672"
     environment:
       # Set explicit RabbitMQ heartbeat timeout - should match client settings 
-      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit heartbeat 30"
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: >-
+        -rabbit 
+        heartbeat 30
+        tcp_listen_options [{nodelay,true},{keepalive,true},{sndbuf,32768},{recbuf,32768}]
+        vm_memory_high_watermark 0.6
+      # Improve queue stability
+      RABBITMQ_DISK_FREE_LIMIT: "1GB"
+      # Improve connection reliability
+      RABBITMQ_HIPE_COMPILE: "1"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
   grayscale_service:
     build: ./grayscale_service
     environment:
@@ -28,9 +40,14 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     ports:
       - "8001:8001"
+    restart: unless-stopped
     depends_on:
       - rabbitmq
       - minio
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
   frontend:
     build: ./frontend
     ports:
@@ -41,7 +58,12 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    restart: unless-stopped
     depends_on:
       - grayscale_service
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 volumes:
   minio-data:

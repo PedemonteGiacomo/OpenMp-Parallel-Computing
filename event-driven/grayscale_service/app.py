@@ -84,24 +84,46 @@ ensure_minio_bucket(minio_client, BUCKET)
 # Setup a heartbeat thread to ensure we respond even when the main thread is busy with processing
 def start_heartbeat_thread(connection, interval=30):
     """Start a separate thread to process heartbeats and keep the connection alive"""
+    # Keep a reference to the connection object to check if it's been replaced
+    connection_ref = connection
+    
     def heartbeat_thread_func():
+        nonlocal connection_ref
+        
         while True:
             try:
                 # Process heartbeats more frequently
                 time.sleep(interval)
-                # Process heartbeats if connection exists
-                if connection and connection.is_open:
-                    connection.process_data_events()
-                    logger.debug("Heartbeat processed")
-                else:
-                    logger.warning("Connection closed, heartbeat thread exiting")
+                
+                # First check if connection is None or has been garbage collected
+                if connection_ref is None:
+                    logger.warning("Connection reference is None, heartbeat thread exiting")
                     break
+                
+                # Now safely check if it's open
+                try:
+                    if connection_ref.is_open:
+                        # Use a short timeout to prevent blocking
+                        connection_ref.process_data_events(time_limit=1.0)
+                        logger.debug("Heartbeat processed")
+                    else:
+                        logger.warning("Connection closed, heartbeat thread exiting")
+                        break
+                except (AttributeError, pika.exceptions.ConnectionWrongStateError):
+                    # Connection object was destroyed or is in wrong state
+                    logger.warning("Connection invalid or in wrong state, heartbeat thread exiting")
+                    break
+                    
             except pika.exceptions.ConnectionClosed as e:
                 logger.error(f"Connection closed in heartbeat thread: {e}")
                 break
+            except pika.exceptions.AMQPError as e:
+                logger.error(f"AMQP error in heartbeat thread: {e}")
+                # For AMQP errors, we should exit and let reconnection logic handle it
+                break
             except Exception as e:
                 logger.error(f"Error in heartbeat thread: {e}")
-                # Don't break - keep trying as long as the application runs
+                # Don't break for other errors - keep trying but with a backoff
                 time.sleep(5)
     
     thread = threading.Thread(target=heartbeat_thread_func, daemon=True)
@@ -110,6 +132,8 @@ def start_heartbeat_thread(connection, interval=30):
     return thread
 
 def connect_rabbitmq(url: str, retries: int = 10, delay: int = 5):
+    heartbeat_thread = None
+    
     for i in range(retries):
         try:
             params = pika.URLParameters(url)
@@ -117,12 +141,22 @@ def connect_rabbitmq(url: str, retries: int = 10, delay: int = 5):
             params.heartbeat = 30  # 30 seconds - shorter heartbeat for more reliable detection
             params.socket_timeout = 300  # 5 minutes to handle long-running tasks
             params.blocked_connection_timeout = 300  # 5 minutes
+            params.tcp_options = {
+                'TCP_NODELAY': True,  # Disable Nagle's algorithm for lower latency
+            }
             
-            # Connect with heartbeat
-            connection = pika.BlockingConnection(params)
-            
-            # Start heartbeat thread to ensure we process events even during heavy processing
-            start_heartbeat_thread(connection, interval=15)  # Process events every 15 seconds (half the heartbeat time)
+            # Connect with heartbeat - use a retry pattern for robustness
+            try:
+                connection = pika.BlockingConnection(params)
+            except pika.exceptions.AMQPConnectionError as conn_err:
+                logger.warning(f"Connection attempt {i+1} failed: {conn_err}")
+                if i == retries - 1:  # Last attempt
+                    raise
+                time.sleep(delay)
+                continue
+                
+            # Successfully connected - start heartbeat thread
+            heartbeat_thread = start_heartbeat_thread(connection, interval=15)  # Process events every 15 seconds
             
             logger.info("Successfully connected to RabbitMQ with heartbeat=%s seconds", params.heartbeat)
             return connection
@@ -414,16 +448,28 @@ def create_rabbitmq_connection():
     global connection, channel
     
     try:
-        # Close existing connection if it exists and is open
-        if 'connection' in globals() and connection and connection.is_open:
-            try:
-                connection.close()
-                logger.info("Closed existing RabbitMQ connection")
-            except Exception as e:
-                logger.warning(f"Error closing existing connection: {e}")
+        # Close existing connection if it exists and is open - safely
+        if 'connection' in globals():
+            old_connection = connection
+            # Set to None first to prevent heartbeat thread from using it
+            connection = None
+            
+            if old_connection:
+                try:
+                    # Check if it has the is_open attribute before accessing
+                    if hasattr(old_connection, 'is_open') and old_connection.is_open:
+                        old_connection.close()
+                        logger.info("Closed existing RabbitMQ connection")
+                except Exception as e:
+                    logger.warning(f"Error closing existing connection: {e}")
         
         # Create a new connection
-        connection = connect_rabbitmq(rabbitmq_url, MAX_RECONNECT_ATTEMPTS, RECONNECT_DELAY)
+        new_connection = connect_rabbitmq(rabbitmq_url, MAX_RECONNECT_ATTEMPTS, RECONNECT_DELAY)
+        if not new_connection:
+            logger.error("Failed to create new RabbitMQ connection")
+            return False
+            
+        connection = new_connection
         channel = connection.channel()
         
         # Declare queues - make sure they're durable
@@ -441,6 +487,18 @@ def create_rabbitmq_connection():
 
 def handle_rabbitmq_failure():
     """Handle RabbitMQ connection failure with exponential backoff"""
+    global connection, channel
+    
+    # First check and set connection to None to avoid any thread using it
+    if 'connection' in globals() and connection is not None:
+        try:
+            if hasattr(connection, 'is_open') and not connection.is_open:
+                connection = None
+                channel = None
+        except Exception:
+            connection = None
+            channel = None
+            
     max_retries = 10
     delay = 1  # Start with 1 second delay
     
@@ -448,14 +506,22 @@ def handle_rabbitmq_failure():
         logger.warning(f"Attempting to reconnect to RabbitMQ (attempt {i+1}/{max_retries})")
         RECONNECT_ATTEMPTS.inc()
         
-        if create_rabbitmq_connection():
-            return True
+        # Add a try-except around the create_rabbitmq_connection call for extra safety
+        try:
+            if create_rabbitmq_connection():
+                return True
+        except Exception as e:
+            logger.error(f"Error during reconnection attempt {i+1}: {e}")
             
         # Exponential backoff with jitter
         jitter = (delay * 0.2) * (2 * random.random() - 1)
         sleep_time = delay + jitter
         logger.warning(f"Waiting {sleep_time:.2f} seconds before next reconnection attempt")
-        time.sleep(sleep_time)
+        try:
+            time.sleep(sleep_time)
+        except Exception:
+            # Just continue if sleep is interrupted
+            pass
         delay = min(delay * 2, 30)  # Double the delay up to 30 seconds max
         
     logger.error("Failed to reconnect to RabbitMQ after multiple attempts")

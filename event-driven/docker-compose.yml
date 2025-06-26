@@ -16,6 +16,9 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+    environment:
+      # Set explicit RabbitMQ heartbeat timeout - should match client settings 
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit heartbeat 30"
   grayscale_service:
     build: ./grayscale_service
     environment:

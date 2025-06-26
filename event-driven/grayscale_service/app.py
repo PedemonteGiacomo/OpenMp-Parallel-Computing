@@ -8,7 +8,10 @@ import sys
 import logging
 import uuid
 import re
+import threading
 import psutil
+import random
+import random
 
 from prometheus_client import Histogram, Counter, start_http_server
 
@@ -78,18 +81,53 @@ def ensure_minio_bucket(client, bucket_name, retries=10, delay=5):
 # Try to ensure the bucket exists
 ensure_minio_bucket(minio_client, BUCKET)
 
+# Setup a heartbeat thread to ensure we respond even when the main thread is busy with processing
+def start_heartbeat_thread(connection, interval=30):
+    """Start a separate thread to process heartbeats and keep the connection alive"""
+    def heartbeat_thread_func():
+        while True:
+            try:
+                # Process heartbeats more frequently
+                time.sleep(interval)
+                # Process heartbeats if connection exists
+                if connection and connection.is_open:
+                    connection.process_data_events()
+                    logger.debug("Heartbeat processed")
+                else:
+                    logger.warning("Connection closed, heartbeat thread exiting")
+                    break
+            except pika.exceptions.ConnectionClosed as e:
+                logger.error(f"Connection closed in heartbeat thread: {e}")
+                break
+            except Exception as e:
+                logger.error(f"Error in heartbeat thread: {e}")
+                # Don't break - keep trying as long as the application runs
+                time.sleep(5)
+    
+    thread = threading.Thread(target=heartbeat_thread_func, daemon=True)
+    thread.start()
+    logger.info("Started heartbeat thread")
+    return thread
+
 def connect_rabbitmq(url: str, retries: int = 10, delay: int = 5):
     for i in range(retries):
         try:
             params = pika.URLParameters(url)
-            # Match frontend settings to avoid mismatched timeouts
-            params.heartbeat = 180  # 3 minutes to avoid disconnects during heavy load
+            # Adjust timeout settings for better stability
+            params.heartbeat = 30  # 30 seconds - shorter heartbeat for more reliable detection
             params.socket_timeout = 300  # 5 minutes to handle long-running tasks
+            params.blocked_connection_timeout = 300  # 5 minutes
+            
+            # Connect with heartbeat
             connection = pika.BlockingConnection(params)
+            
+            # Start heartbeat thread to ensure we process events even during heavy processing
+            start_heartbeat_thread(connection, interval=15)  # Process events every 15 seconds (half the heartbeat time)
+            
             logger.info("Successfully connected to RabbitMQ with heartbeat=%s seconds", params.heartbeat)
             return connection
-        except AMQPConnectionError:
-            logger.warning(f"Waiting for RabbitMQ... ({i + 1}/{retries})")
+        except AMQPConnectionError as e:
+            logger.warning(f"Waiting for RabbitMQ... ({i + 1}/{retries}): {e}")
             RECONNECT_ATTEMPTS.inc()
             time.sleep(delay)
     raise RuntimeError("Could not connect to RabbitMQ after multiple retries")
@@ -116,6 +154,12 @@ def process(ch, method, properties, body):
     start_process_time = time.time()
     
     try:
+        # Check if connection is still alive
+        if not connection.is_open:
+            logger.warning("RabbitMQ connection is closed. Attempting to reconnect...")
+            if not handle_rabbitmq_failure():
+                raise RuntimeError("Failed to reconnect to RabbitMQ")
+                
         msg = json.loads(body)
         image_key = msg['image_key']
         threads = msg.get('threads') or [1]
@@ -306,6 +350,26 @@ def process(ch, method, properties, body):
             
             raise
             
+    except pika.exceptions.AMQPConnectionError as e:
+        logger.error(f"RabbitMQ connection error: {e}")
+        FAILURES.inc()
+        
+        # Try to reconnect
+        if handle_rabbitmq_failure():
+            logger.info("Successfully reconnected to RabbitMQ, but the current message was lost")
+            # We'll nack the message to requeue it if possible
+            try:
+                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                logger.info("Message has been requeued for reprocessing")
+            except Exception as nack_error:
+                logger.error(f"Failed to requeue message: {nack_error}")
+        else:
+            logger.error("Failed to reconnect to RabbitMQ, rejecting message")
+            try:
+                ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
+            except Exception:
+                pass
+                
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         FAILURES.inc()
@@ -318,6 +382,12 @@ def process(ch, method, properties, body):
                     'error': True,
                     'error_message': str(e)
                 }
+                
+                # Ensure connection is still alive
+                if not connection.is_open:
+                    if handle_rabbitmq_failure():
+                        # We got a new channel after reconnection
+                        logger.info("Reconnected to RabbitMQ to send error message")
                 
                 properties = pika.BasicProperties(
                     delivery_mode=2,  # make message persistent
@@ -337,6 +407,59 @@ def process(ch, method, properties, body):
         # Always acknowledge message to avoid getting stuck
         # Even if processing fails, we don't want to reprocess the same message
         ch.basic_ack(delivery_tag=method.delivery_tag)
+
+# Add a function to recreate the RabbitMQ connection with exponential backoff
+def create_rabbitmq_connection():
+    """Create a new RabbitMQ connection with automatic reconnection"""
+    global connection, channel
+    
+    try:
+        # Close existing connection if it exists and is open
+        if 'connection' in globals() and connection and connection.is_open:
+            try:
+                connection.close()
+                logger.info("Closed existing RabbitMQ connection")
+            except Exception as e:
+                logger.warning(f"Error closing existing connection: {e}")
+        
+        # Create a new connection
+        connection = connect_rabbitmq(rabbitmq_url, MAX_RECONNECT_ATTEMPTS, RECONNECT_DELAY)
+        channel = connection.channel()
+        
+        # Declare queues - make sure they're durable
+        channel.queue_declare(queue='grayscale', durable=True)
+        channel.queue_declare(queue='grayscale_processed', durable=True)
+        
+        # Set prefetch count to control how many messages we process at once
+        channel.basic_qos(prefetch_count=PREFETCH_COUNT)
+        
+        logger.info("Successfully reconnected to RabbitMQ")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to reconnect to RabbitMQ: {e}")
+        return False
+
+def handle_rabbitmq_failure():
+    """Handle RabbitMQ connection failure with exponential backoff"""
+    max_retries = 10
+    delay = 1  # Start with 1 second delay
+    
+    for i in range(max_retries):
+        logger.warning(f"Attempting to reconnect to RabbitMQ (attempt {i+1}/{max_retries})")
+        RECONNECT_ATTEMPTS.inc()
+        
+        if create_rabbitmq_connection():
+            return True
+            
+        # Exponential backoff with jitter
+        jitter = (delay * 0.2) * (2 * random.random() - 1)
+        sleep_time = delay + jitter
+        logger.warning(f"Waiting {sleep_time:.2f} seconds before next reconnection attempt")
+        time.sleep(sleep_time)
+        delay = min(delay * 2, 30)  # Double the delay up to 30 seconds max
+        
+    logger.error("Failed to reconnect to RabbitMQ after multiple attempts")
+    return False
 
 def main():
     """Main function with reconnection handling"""

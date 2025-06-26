@@ -380,6 +380,23 @@ Common issues and solutions:
    - Solution: The system now has error reporting between services. When the grayscale service encounters an error during processing, it sends an error message via RabbitMQ, which is displayed in the frontend.
    - Check logs with `docker-compose logs grayscale_service` to see detailed error information
 
+7. **RabbitMQ Missed Heartbeats**
+   - Symptoms: Error message `missed heartbeats from client, timeout: 180s`, connection drops between services and RabbitMQ
+   - Solution: The system now implements robust heartbeat handling:
+     ```
+     1. Reduced heartbeat interval from 180s to 30s
+     2. Added background heartbeat thread that processes events every 15s
+     3. Implemented automatic reconnection with exponential backoff
+     4. Enhanced error handling in both frontend and backend services
+     ```
+   - If issues persist, you can manually increase the heartbeat frequency:
+     ```bash
+     # Edit docker-compose.yml to adjust the RabbitMQ heartbeat settings
+     # Then restart the services
+     docker-compose down
+     docker-compose up -d
+     ```
+
 ## Adding New Processing Services
 
 To add a new OpenMP-based processing service:

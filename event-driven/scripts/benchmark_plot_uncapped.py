@@ -84,7 +84,7 @@ def delta_metrics(after, before):
     return {k: after[k] - before.get(k, 0) for k in after}
 
 
-def run_batch(image, url, count, concurrency, session=None, passes=1, threads_list='1,2,4'):
+def run_batch(image, url, count, concurrency, session=None, force_full_concurrency=False, passes=1, threads_list='1,2,4'):
     """Run a batch of requests with circuit breaker pattern to prevent overload"""
     latencies = []
     
@@ -101,8 +101,12 @@ def run_batch(image, url, count, concurrency, session=None, passes=1, threads_li
     timeout = min(60, 30 + (count // 10))
     max_retries = 3
     
-    # Use gentler concurrency level for higher request counts
-    actual_concurrency = min(concurrency, 5 if count <= 20 else 3)
+    # Use gentler concurrency level for higher request counts unless forced
+    if force_full_concurrency:
+        actual_concurrency = concurrency
+        print("Warning: Using full requested concurrency - this may overload the system!")
+    else:
+        actual_concurrency = min(concurrency, 5 if count <= 20 else 3)
     
     print(f"Using delay={base_delay}s, concurrency={actual_concurrency}, timeout={timeout}s")
     
@@ -202,6 +206,8 @@ def main():
     parser.add_argument('--concurrency', type=int, default=None, help='workers per run (default=count)')
     parser.add_argument('--output', default='benchmark.png', help='output PNG file')
     parser.add_argument('--safer', action='store_true', help='use more conservative test settings')
+    parser.add_argument('--force-concurrency', action='store_true', 
+                        help='force the use of the full requested concurrency (may overload system)')
     parser.add_argument('--passes', type=int, default=1, help='number of kernel passes (increases computation load)')
     parser.add_argument('--threads', type=str, default='1,2,4', help='comma-separated list of thread counts')
     args = parser.parse_args()
@@ -230,8 +236,11 @@ def main():
     
     for c in counts:
         try:
-            # Use reasonable concurrency (don't overload the system)
-            conc = min(args.concurrency or c, 10)
+            # Use requested concurrency but cap at 10 unless forced
+            if args.force_concurrency:
+                conc = args.concurrency or c
+            else:
+                conc = min(args.concurrency or c, 10)
             
             # Add increasing cooldown delays between tests as counts grow
             if len(results) > 0:
@@ -259,9 +268,10 @@ def main():
             print(f'Running {c} requests with concurrency {conc}, passes={args.passes}, threads={args.threads}')
             before = metrics_snapshot()
             stats = run_batch(args.image, args.url, c, conc, 
-                              session=session, 
-                              passes=args.passes, 
-                              threads_list=args.threads)
+                             session=session, 
+                             force_full_concurrency=args.force_concurrency,
+                             passes=args.passes,
+                             threads_list=args.threads)
             after = metrics_snapshot()
             
             diff = delta_metrics(after, before)
@@ -349,4 +359,3 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
-

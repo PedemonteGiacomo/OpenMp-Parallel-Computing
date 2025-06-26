@@ -33,7 +33,7 @@ def create_session(retries=3):
     return session
 
 
-def submit(image_path, url, retry_delay=2, max_retries=3, timeout=30, session=None):
+def submit(image_path, url, retry_delay=2, max_retries=3, timeout=30, session=None, passes=1, threads=None):
     """
     Submit an image for processing with rate limiting and retries.
     
@@ -44,6 +44,8 @@ def submit(image_path, url, retry_delay=2, max_retries=3, timeout=30, session=No
         max_retries: Maximum number of retry attempts
         timeout: Maximum seconds to wait for processing
         session: Reusable requests session (optional)
+        passes: Number of kernel passes to perform (increases computational load)
+        threads: List of thread counts to use for processing
     """
     start = time.time()
     retry_count = 0
@@ -65,9 +67,14 @@ def submit(image_path, url, retry_delay=2, max_retries=3, timeout=30, session=No
             # Print debug information
             print(f"Submitting request to {url} with image {image_path}")
             
-            # Add thread selection and repeat parameters
-            # Only test with 1-2 threads to reduce system load
-            data = {'threads': [1], 'repeat': 1}
+            # Add thread selection, repeat, and passes parameters
+            # Use provided values or defaults
+            thread_counts = threads if threads else [1]
+            data = {
+                'threads': thread_counts,
+                'repeat': 1,
+                'passes': passes
+            }
             
             with open(image_path, 'rb') as f:
                 files = {'image': (os.path.basename(image_path), f, mime_type)}
@@ -161,6 +168,8 @@ def main():
     parser.add_argument('--timeout', type=int, default=60, help='timeout for request processing in seconds')
     parser.add_argument('--retries', type=int, default=3, help='max retries per request')
     parser.add_argument('--debug', action='store_true', help='print detailed debug information')
+    parser.add_argument('--passes', type=int, default=1, help='number of kernel passes to increase computation load')
+    parser.add_argument('--threads', type=str, default='1', help='comma-separated list of thread counts to use')
     args = parser.parse_args()
     
     # Check if image file exists
@@ -172,13 +181,18 @@ def main():
     if not args.url.endswith('/'):
         args.url += '/'
     
+    # Parse thread counts
+    thread_list = [int(t) for t in args.threads.split(',')]
+    
     print(f"\nRunning load test with:")
     print(f"- Image: {args.image}")
     print(f"- URL: {args.url}")
     print(f"- Count: {args.count} requests")
     print(f"- Concurrency: {args.concurrency} workers")
     print(f"- Request delay: {args.delay} seconds")
-    print(f"- Timeout: {args.timeout} seconds\n")
+    print(f"- Timeout: {args.timeout} seconds")
+    print(f"- Kernel passes: {args.passes} (higher = more intensive processing)")
+    print(f"- Thread counts: {thread_list}\n")
     
     # Test connection to server before starting
     healthy, message = check_server_health(args.url)
@@ -203,13 +217,18 @@ def main():
         for i in range(args.count):
             # Add jitter to delay to prevent synchronized bursts
             jitter = random.uniform(0.1, 0.5) if args.delay > 0 else 0
+            # Parse thread list
+            thread_list = [int(t) for t in args.threads.split(',')]
+            
             futures.append(ex.submit(submit, 
                                     args.image, 
                                     args.url, 
                                     retry_delay=2, 
                                     max_retries=args.retries, 
                                     timeout=args.timeout,
-                                    session=session))
+                                    session=session,
+                                    passes=args.passes,
+                                    threads=thread_list))
             
             if i < args.count - 1:  # Don't sleep after the last submission
                 time.sleep(args.delay + jitter)

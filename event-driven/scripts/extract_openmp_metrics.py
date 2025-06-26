@@ -100,7 +100,7 @@ def extract_prometheus_metrics():
         return None
 
 
-def run_controlled_test(image_path, threads, repeats=3):
+def run_controlled_test(image_path, threads, repeats=3, passes=1):
     """
     Run a controlled test with specific thread counts and measure OpenMP performance
     
@@ -108,10 +108,11 @@ def run_controlled_test(image_path, threads, repeats=3):
         image_path: Path to test image
         threads: List of thread counts to test
         repeats: Number of times to repeat each test for statistical significance
+        passes: Number of kernel passes to increase computational complexity
     """
     thread_results = {}
     
-    print(f"Running controlled test with thread counts {threads}, {repeats} repeats each")
+    print(f"Running controlled test with thread counts {threads}, {repeats} repeats each, {passes} kernel passes")
     
     for thread_count in threads:
         thread_times = []
@@ -121,10 +122,14 @@ def run_controlled_test(image_path, threads, repeats=3):
             print(f"  Repeat {i+1}/{repeats}...", end="", flush=True)
             
             try:
-                # Submit with specified thread count
+                # Submit with specified thread count and passes
                 with open(image_path, 'rb') as f:
                     files = {'image': f}
-                    data = {'threads': [thread_count], 'repeat': 1}  # Just one repeat per submission
+                    data = {
+                        'threads': [thread_count], 
+                        'repeat': 1,  # Just one repeat per submission
+                        'passes': passes  # Apply kernel multiple times for heavier processing
+                    }
                     
                     # Submit request
                     start_time = time.time()
@@ -329,6 +334,8 @@ def main():
                         help='Thread counts to test, comma-separated (only for test mode)')
     parser.add_argument('--repeats', type=int, default=3,
                         help='Number of repeats per thread count (only for test mode)')
+    parser.add_argument('--passes', type=int, default=1,
+                        help='Number of kernel passes to perform (increases computational load)')
     parser.add_argument('--output', default=None,
                         help='Output file for report or plot')
     args = parser.parse_args()
@@ -350,7 +357,7 @@ def main():
             
     elif args.mode == 'test':
         thread_counts = [int(t) for t in args.threads.split(',')]
-        results = run_controlled_test(args.image, thread_counts, args.repeats)
+        results = run_controlled_test(args.image, thread_counts, args.repeats, args.passes)
         
         if results:
             print("\nThread Scaling Results:")

@@ -279,6 +279,20 @@ def main():
             queue_avg = diff['queue_sum'] / diff['queue_cnt'] if diff['queue_cnt'] else 0
             proc_avg = diff['proc_sum'] / diff['proc_cnt'] if diff['proc_cnt'] else 0
             
+            # Check if we can get kernel time from metrics
+            kernel_avg = 0
+            try:
+                kernel_re = re.search(r'grayscale_kernel_seconds_sum\s+(\S+)', after, re.M)
+                kernel_cnt_re = re.search(r'grayscale_kernel_seconds_count\s+(\S+)', after, re.M)
+                
+                if kernel_re and kernel_cnt_re:
+                    kernel_sum = float(kernel_re.group(1))
+                    kernel_cnt = float(kernel_cnt_re.group(1))
+                    kernel_avg = kernel_sum / kernel_cnt if kernel_cnt else 0
+                    print(f"Kernel average time: {kernel_avg:.3f}s")
+            except Exception as e:
+                print(f"Note: Could not parse kernel time metric: {e}")
+            
             # Check if batch had meaningful results
             if stats['success_rate'] < 0.5:
                 print(f"Warning: Low success rate ({stats['success_rate']*100:.1f}%) - metrics may be unreliable")
@@ -294,6 +308,7 @@ def main():
                 'throughput': stats['throughput'],
                 'queue_avg': queue_avg,
                 'proc_avg': proc_avg,
+                'kernel_avg': kernel_avg,
                 'req_avg': req_avg,
                 'success_rate': stats.get('success_rate', 1.0),
             })
@@ -340,8 +355,9 @@ def main():
 
         axes[1, 1].plot(counts, [r['queue_avg'] for r in results], marker='o', label='Queue wait')
         axes[1, 1].plot(counts, [r['proc_avg'] for r in results], marker='o', label='Processing')
+        axes[1, 1].plot(counts, [r.get('kernel_avg', 0) for r in results], marker='s', label='Kernel only', linestyle='--')
         axes[1, 1].plot(counts, [r['req_avg'] for r in results], marker='o', label='Total request')
-        axes[1, 1].set_title('Prometheus averages')
+        axes[1, 1].set_title('Processing time breakdown')
         axes[1, 1].set_xlabel('Requests')
         axes[1, 1].set_ylabel('Seconds')
         axes[1, 1].legend()

@@ -297,13 +297,52 @@ PAGE_TEMPLATE = """
   <script>
     const timeChart = new Chart(document.getElementById('timeChart'), {
       type: 'bar',
-      data: { labels: [], datasets: [{ label: 'Time (s)', data: [] }] },
-      options: { scales: { y: { beginAtZero: true } } }
+      data: { 
+        labels: [], 
+        datasets: [
+          { label: 'Total Time (s)', data: [], backgroundColor: 'rgba(54, 162, 235, 0.7)' },
+          { label: 'Kernel Time (s)', data: [], backgroundColor: 'rgba(255, 99, 132, 0.7)' }
+        ] 
+      },
+      options: { 
+        scales: { y: { beginAtZero: true } },
+        plugins: {
+          title: {
+            display: true,
+            text: 'Execution Time Comparison'
+          },
+          tooltip: {
+            callbacks: {
+              footer: function(tooltipItems) {
+                const idx = tooltipItems[0].dataIndex;
+                const totalTime = tooltipItems[0].dataset.data[idx];
+                const kernelTime = tooltipItems[1] ? tooltipItems[1].dataset.data[idx] : 0;
+                const overhead = totalTime - kernelTime;
+                return `Overhead: ${overhead.toFixed(3)}s (${(overhead/totalTime*100).toFixed(1)}%)`;
+              }
+            }
+          }
+        }
+      }
     });
     const speedChart = new Chart(document.getElementById('speedChart'), {
       type: 'bar',
-      data: { labels: [], datasets: [{ label: 'Speed-up', data: [] }] },
-      options: { scales: { y: { beginAtZero: true } } }
+      data: { 
+        labels: [], 
+        datasets: [
+          { label: 'Total Speed-up', data: [], backgroundColor: 'rgba(54, 162, 235, 0.7)' },
+          { label: 'Kernel Speed-up', data: [], backgroundColor: 'rgba(255, 99, 132, 0.7)' }
+        ] 
+      },
+      options: { 
+        scales: { y: { beginAtZero: true } },
+        plugins: {
+          title: {
+            display: true,
+            text: 'Speed-up Factor vs Single Thread'
+          }
+        }
+      }
     });
     
     async function poll() {
@@ -324,16 +363,27 @@ PAGE_TEMPLATE = """
           document.getElementById('processed-img').style.display = 'block';
           document.getElementById('status').textContent = 'Done';
           const threads = Object.keys(data.times).map(t => parseInt(t)).sort((a,b)=>a-b);
-          const times = threads.map(t => data.times[t]);
+          
+          // Process the new time data structure which now contains 'total' and 'kernel' times
+          const totalTimes = threads.map(t => data.times[t].total || data.times[t]); // Fallback for backwards compatibility
+          const kernelTimes = threads.map(t => data.times[t].kernel || 0); // Kernel time might not be available in older data
+          
+          // Update time chart with both metrics
           threads.forEach((t,i) => {
             timeChart.data.labels.push(t.toString());
-            timeChart.data.datasets[0].data.push(times[i]);
+            timeChart.data.datasets[0].data.push(totalTimes[i]);
+            timeChart.data.datasets[1].data.push(kernelTimes[i]);
           });
           timeChart.update();
-          const base = times[0];
+          
+          // Calculate speedups for both total and kernel times
+          const baseTotalTime = totalTimes[0];
+          const baseKernelTime = kernelTimes[0];
+          
           threads.forEach((t,i) => {
             speedChart.data.labels.push(t.toString());
-            speedChart.data.datasets[0].data.push(base / times[i]);
+            speedChart.data.datasets[0].data.push(totalTimes[i] ? baseTotalTime / totalTimes[i] : 0);
+            speedChart.data.datasets[1].data.push(kernelTimes[i] ? baseKernelTime / kernelTimes[i] : 0);
           });
           speedChart.update();
           document.getElementById('status').textContent = 'Processed';

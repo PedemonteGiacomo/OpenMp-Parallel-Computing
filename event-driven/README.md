@@ -246,12 +246,15 @@ This interactive script provides options to:
 
 The system provides several ways to measure OpenMP performance:
 
-1. **Frontend Charts**: The web UI displays two charts:
-   - Execution time for each thread count
-   - Speed-up factor relative to single-thread performance
+1. **Frontend Charts**: The web UI displays two charts with detailed metrics:
+   - Execution time chart showing both total execution time and kernel-only time for each thread count
+   - Speed-up factor chart showing both total speedup and kernel-only speedup relative to single-thread performance
+   - Hovering over the bars shows the overhead (time spent outside the kernel) in seconds and percentage
 
-2. **Process Time Metrics**: The grayscale service records processing time in Prometheus:
-   - `grayscale_process_seconds`: Time spent executing the OpenMP algorithm
+2. **Process Time Metrics**: The grayscale service records detailed timing data in Prometheus:
+   - `grayscale_process_seconds`: Total time spent executing the OpenMP algorithm including I/O and setup
+   - `grayscale_kernel_seconds`: Time spent only in the computational kernel (pure OpenMP parallel section)
+   - `grayscale_queue_wait_seconds`: Time messages spend waiting in the queue
    - Accessible at `http://localhost:8001/`
 
 3. **Benchmark Reports**: The benchmark script generates plots showing:
@@ -259,6 +262,7 @@ The system provides several ways to measure OpenMP performance:
    - 95th percentile latency
    - Throughput (requests/second)
    - Success rate
+   - Detailed time breakdown including kernel time
 
 Example of extracting raw OpenMP timing data:
 ```bash
@@ -653,3 +657,38 @@ Queste informazioni avanzate includono:
    - Statistiche separate per ogni configurazione di thread
 
 Questi log dettagliati semplificano il debug, l'ottimizzazione e l'analisi delle prestazioni del sistema.
+
+### Analisi Dettagliata del Tempo del Kernel
+
+Il sistema ora separa e analizza due componenti principali del tempo di esecuzione:
+
+1. **Tempo Totale**: Il tempo completo di esecuzione, che include:
+   - Caricamento dell'immagine
+   - Elaborazione parallela con OpenMP
+   - Salvataggio dell'immagine
+   - Comunicazione di rete
+
+2. **Tempo del Kernel**: Solo il tempo trascorso nella funzione parallela di OpenMP che esegue l'effettiva conversione in scala di grigi:
+   - Rappresenta il "puro" tempo di calcolo parallelo
+   - Esclude overhead di I/O, comunicazione e marshalling dei dati
+   - Consente di valutare l'efficienza reale della parallelizzazione
+
+Questa separazione permette di:
+
+- Identificare dove il codice trae realmente vantaggio dall'uso di più thread
+- Rilevare colli di bottiglia nelle parti seriali dell'applicazione
+- Calcolare lo speedup effettivo del calcolo parallelo
+- Determinare l'overhead delle operazioni non computazionali
+
+Esempio di output esteso dall'esecuzione:
+
+```
+Thread 4, run 1/1 - Kernel time: 0.0342s, total time: 0.1543s, overhead: 0.1201s (77.8%), passes=1
+```
+
+Questo indica che:
+- Il kernel OpenMP ha richiesto 0.0342 secondi
+- L'esecuzione completa ha richiesto 0.1543 secondi
+- L'overhead (operazioni non parallele) ammonta a 0.1201 secondi (77.8% del tempo totale)
+
+Nelle visualizzazioni, il tempo del kernel è rappresentato con barre separate di colore diverso, permettendo un confronto immediato tra il tempo totale e quello effettivamente speso nel calcolo parallelo.

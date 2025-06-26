@@ -39,6 +39,10 @@ PROCESS_TIME = Histogram(
     'grayscale_process_seconds',
     'Time spent executing the grayscale algorithm'
 )
+KERNEL_TIME = Histogram(
+    'grayscale_kernel_seconds',
+    'Time spent in the OpenMP kernel executing the core grayscale algorithm'
+)
 STARTUP_TIME = Histogram(
     'grayscale_startup_seconds',
     'Time from container start to first processed message'
@@ -285,22 +289,62 @@ def process(ch, method, properties, body):
                                 kernel_time = float(proc_time_match.group(2))
                                 actual_threads = int(proc_time_match.group(3))
                                 
+                                # Record kernel time in Prometheus metrics separately
+                                KERNEL_TIME.observe(kernel_time)
+                                
+                                # Store the kernel time as well for later use
+                                if str(t) not in times:
+                                    times[str(t)] = {'total': [], 'kernel': []}
+                                times[str(t)]['total'].append(elapsed)
+                                times[str(t)]['kernel'].append(kernel_time)
+                                
+                                # Calculate overhead percentage
+                                overhead = elapsed - kernel_time
+                                overhead_pct = (overhead / elapsed) * 100 if elapsed > 0 else 0
+                                
                                 # We don't have direct access to image dimensions here
                                 # Just log what we know without dimensions
                                 logger.info(f"Thread {t}, run {i+1}/{repeats} - Kernel time: {kernel_time:.4f}s, " + 
-                                          f"total time: {elapsed:.4f}s, passes={actual_passes}")
+                                          f"total time: {elapsed:.4f}s, overhead: {overhead:.4f}s ({overhead_pct:.1f}%), " +
+                                          f"passes={actual_passes}")
+                            else:
+                                # If we can't parse kernel time, just store total time
+                                if str(t) not in times:
+                                    times[str(t)] = {'total': [], 'kernel': []}
+                                times[str(t)]['total'].append(elapsed)
                         except subprocess.CalledProcessError as e:
                             logger.error(f"Error processing image: {e}")
                             FAILURES.inc()
                             # Continue with other runs, we'll use whatever data we have
                     
-                    # Calculate average time if we have any successful runs
-                    if single:
-                        times[str(t)] = sum(single) / len(single)
+                    # Calculate average times - we'll handle this at the end
                 
                 # If we have no successful runs at all, raise exception
                 if not times:
                     raise RuntimeError("All processing runs failed")
+                
+                # Calculate average times for each thread count
+                avg_times = {}
+                for t_str, time_data in times.items():
+                    # Calculate average total time
+                    if time_data['total']:
+                        avg_total = sum(time_data['total']) / len(time_data['total'])
+                    else:
+                        avg_total = 0
+                        
+                    # Calculate average kernel time if available
+                    if time_data['kernel']:
+                        avg_kernel = sum(time_data['kernel']) / len(time_data['kernel'])
+                    else:
+                        avg_kernel = 0
+                        
+                    avg_times[t_str] = {
+                        'total': avg_total,
+                        'kernel': avg_kernel
+                    }
+                
+                # Replace the times dictionary with the averages
+                times = avg_times
 
                 with open(out_path, 'rb') as outf:
                     data = outf.read()

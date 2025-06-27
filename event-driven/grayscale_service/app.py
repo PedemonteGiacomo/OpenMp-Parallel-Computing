@@ -176,7 +176,7 @@ connection = connect_rabbitmq(rabbitmq_url, MAX_RECONNECT_ATTEMPTS, RECONNECT_DE
 channel = connection.channel()
 
 # Declare queues - make sure they're durable
-channel.queue_declare(queue='grayscale', durable=True)
+channel.queue_declare(queue='image_processing', durable=True)
 channel.queue_declare(queue='grayscale_processed', durable=True)
 
 # Set prefetch count to control how many messages we process at once
@@ -200,6 +200,7 @@ def process(ch, method, properties, body):
                 
         msg = json.loads(body)
         image_key = msg['image_key']
+        output_key = msg.get('output_key', f"processed/{os.path.basename(image_key)}")  # Use provided output_key or fallback
         threads = msg.get('threads') or [1]
         if isinstance(threads, int):
             threads = [threads]
@@ -371,7 +372,7 @@ def process(ch, method, properties, body):
                             time.sleep(delay)
                     raise last_error or RuntimeError("Failed to upload to MinIO")
                 
-                processed_key = f"processed/{os.path.basename(image_key)}"
+                processed_key = output_key  # Use the output_key from the message
                 put_minio_object(BUCKET, processed_key, data, 'image/png')
                 
                 logger.info(f"Uploaded processed image to {processed_key}")
@@ -517,7 +518,7 @@ def create_rabbitmq_connection():
         channel = connection.channel()
         
         # Declare queues - make sure they're durable
-        channel.queue_declare(queue='grayscale', durable=True)
+        channel.queue_declare(queue='image_processing', durable=True)
         channel.queue_declare(queue='grayscale_processed', durable=True)
         
         # Set prefetch count to control how many messages we process at once
@@ -575,7 +576,7 @@ def main():
     """Main function with reconnection handling"""
     try:
         logger.info(f"Starting grayscale service with prefetch_count={PREFETCH_COUNT}")
-        channel.basic_consume(queue='grayscale', on_message_callback=process)
+        channel.basic_consume(queue='image_processing', on_message_callback=process)
         logger.info('Waiting for messages. To exit press CTRL+C')
         channel.start_consuming()
     except KeyboardInterrupt:

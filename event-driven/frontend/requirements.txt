@@ -1,3 +1,5 @@
 Flask
 minio
 pika
+prometheus_client
+requests

@@ -1,2 +1,4 @@
 pika
 minio
+prometheus_client
+psutil

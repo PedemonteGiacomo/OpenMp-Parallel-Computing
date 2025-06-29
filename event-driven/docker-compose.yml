@@ -16,6 +16,84 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+    environment:
+      # Set explicit RabbitMQ heartbeat timeout - should match client settings 
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: >-
+        -rabbit 
+        heartbeat 30
+        tcp_listen_options [{nodelay,true},{keepalive,true},{sndbuf,32768},{recbuf,32768}]
+        vm_memory_high_watermark 0.6
+      # Improve queue stability
+      RABBITMQ_DISK_FREE_LIMIT: "1GB"
+      # Improve connection reliability
+      RABBITMQ_HIPE_COMPILE: "1"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+  # Load Balancer for API Gateway
+  nginx_lb:
+    image: nginx:alpine
+    ports:
+      - "8000:80"  # Load balancer entry point
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped
+    depends_on:
+      - api_gateway
+
+  # API Gateway - Single entry point for all processing requests
+  api_gateway:
+    build: ./api_gateway
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    ports:
+      - "8000"  # Internal port for load balancer
+      - "8090:8090"  # Prometheus metrics
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+      - minio
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # Frontend that uses API Gateway (device-adaptive)
+  frontend_gateway:
+    build: ./frontend_gateway
+    environment:
+      API_GATEWAY_URL: http://api_gateway:8000
+    ports:
+      - "8080:8080"  # New frontend port
+    restart: unless-stopped
+    depends_on:
+      - api_gateway
+
+  # Updated frontend with API Gateway integration
+  frontend:
+    build: ./frontend
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      API_GATEWAY_URL: http://api_gateway:8000
+    ports:
+      - "8081:5000"  # Frontend runs on port 5000 internally, exposed on 8081
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+      - minio
+      - api_gateway
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
   grayscale_service:
     build: ./grayscale_service
     environment:
@@ -23,19 +101,38 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
     depends_on:
       - rabbitmq
       - minio
-  frontend:
-    build: ./frontend
-    ports:
-      - "8080:5000"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # Service Scaler - Auto-scales services based on queue depth
+  service_scaler:
+    build: ./service_scaler
     environment:
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      COMPOSE_PROJECT: event-driven
+      SCALE_CHECK_INTERVAL: 30
+      MAX_INSTANCES: 5
+      MIN_INSTANCES: 1
+      SCALE_UP_THRESHOLD: 10
+      SCALE_DOWN_THRESHOLD: 2
+    ports:
+      - "8082:8080"  # Health API
+      - "9090:9090"  # Prometheus metrics
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/workspace  # Mount entire project directory for scaling
+    restart: unless-stopped
     depends_on:
-      - grayscale_service
+      - rabbitmq
+    privileged: true  # Needed for Docker socket access
+
 volumes:
   minio-data:

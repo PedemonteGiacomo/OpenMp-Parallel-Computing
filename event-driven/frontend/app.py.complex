@@ -1,0 +1,376 @@
+import io
+import os
+import uuid
+import time
+import threading
+import logging
+from flask import Flask, request, send_file, render_template_string
+from minio import Minio
+import pika
+import json
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+BUCKET = 'images'
+
+minio_client = Minio(
+    os.environ.get('MINIO_ENDPOINT', 'minio:9000'),
+    access_key=os.environ.get('MINIO_ACCESS_KEY', 'minioadmin'),
+    secret_key=os.environ.get('MINIO_SECRET_KEY', 'minioadmin'),
+    secure=False
+)
+
+# Make sure bucket exists
+if not minio_client.bucket_exists(BUCKET):
+    minio_client.make_bucket(BUCKET)
+    logger.info(f"Created bucket: {BUCKET}")
+
+def connect_rabbitmq(url: str, retries: int = 10, delay: int = 5):
+    for i in range(retries):
+        try:
+            params = pika.URLParameters(url)
+            # Set heartbeat to detect broken connections faster, but not too fast
+            params.heartbeat = 180  # 3 minutes to avoid disconnects during heavy load
+            params.socket_timeout = 300  # 5 minutes to be tolerant of network and processing delays
+            connection = pika.BlockingConnection(params)
+            logger.info("Connected to RabbitMQ")
+            return connection
+        except pika.exceptions.AMQPConnectionError:
+            logger.warning(f"Waiting for RabbitMQ... ({i + 1}/{retries})")
+            time.sleep(delay)
+    raise RuntimeError("Could not connect to RabbitMQ")
+
+# Connect to RabbitMQ
+connection = connect_rabbitmq(os.environ.get('RABBITMQ_URL', 'amqp://guest:guest@localhost:5672/'))
+channel = connection.channel()
+channel.queue_declare(queue='grayscale', durable=True)
+channel.queue_declare(queue='grayscale_processed', durable=True)
+
+# Dictionary storing processed results indexed by original key
+PROCESSED = {}
+# Lock to protect access to the PROCESSED dict
+processed_lock = threading.Lock()
+
+def consume_processed():
+    """Background thread consuming completion messages."""
+    while True:
+        try:
+            proc_connection = connect_rabbitmq(os.environ.get('RABBITMQ_URL', 'amqp://guest:guest@localhost:5672/'))
+            proc_channel = proc_connection.channel()
+            proc_channel.queue_declare(queue='grayscale_processed', durable=True)
+
+            def cb(ch, method, properties, body):
+                try:
+                    msg = json.loads(body)
+                    image_key = msg['image_key']
+                    with processed_lock:
+                        PROCESSED[image_key] = {
+                            'processed_key': msg['processed_key'],
+                            'times': msg.get('times', {}),
+                            'passes': msg.get('passes'),
+                        }
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+                    logger.info(f"Processed message for {image_key}")
+                except Exception as e:
+                    logger.error(f"Error processing message: {e}")
+                    # Requeue only if not a parsing error
+                    if "JSONDecodeError" not in str(e):
+                        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                    else:
+                        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+            proc_channel.basic_qos(prefetch_count=1)
+            proc_channel.basic_consume(queue='grayscale_processed', on_message_callback=cb)
+            
+            logger.info("Starting to consume processed messages")
+            proc_channel.start_consuming()
+            
+        except Exception as e:
+            logger.error(f"Error in consumer thread: {e}")
+            # Sleep before reconnecting
+            time.sleep(5)
+
+# Start consumer thread
+threading.Thread(target=consume_processed, daemon=True).start()
+
+app = Flask(__name__)
+
+PAGE_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <link href='https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css' rel='stylesheet'>
+  <script src='https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js'></script>
+  <script src='/static/chart.min.js'></script>
+  <style>
+    body { padding-top: 40px; }
+    .card-image img { width: 100%; }
+  </style>
+</head>
+<body class='container'>
+  <h3>Grayscale Converter</h3>
+  <form method='post' enctype='multipart/form-data'>
+    <div class='file-field input-field'>
+      <div class='btn'>
+        <span>File</span>
+        <input type='file' name='image'>
+      </div>
+      <div class='file-path-wrapper'>
+        <input class='file-path validate' type='text'>
+      </div>
+    </div>
+    <p>Threads to test:</p>
+    {% for t in [1,2,4,6] %}
+    <label>
+      <input type='checkbox' name='threads' value='{{t}}' {% if t in threads_val %}checked{% endif %}>
+      <span>{{t}}</span>
+    </label>
+    {% endfor %}
+    <div class='input-field'>
+      <input id='repeat' type='number' name='repeat' min='1' max='5' value='{{repeat_val}}'>
+      <label for='repeat'>Runs per thread (max 5)</label>
+    </div>
+    <div class='input-field'>
+      <input id='passes' type='number' name='passes' min='1' max='10' value='{{passes_val}}'>
+      <label for='passes'>Kernel passes (1-10, higher = more intensive)</label>
+    </div>
+    <button class='btn waves-effect waves-light' type='submit'>Process</button>
+  </form>
+  
+  {% if key %}
+  <div class='row'>
+    <div class='col s12 m6'>
+      <div class='card z-depth-2'>
+        <div class='card-image'>
+          <img src='{{ url_for("image", key=key) }}'>
+        </div>
+        <div class='card-content'><span class='card-title'>Original</span></div>
+      </div>
+    </div>
+    <div class='col s12 m6'>
+      <div class='card z-depth-2'>
+        <div class='card-image'>
+          <img id='processed-img' style='display:none;'>
+        </div>
+        <div class='card-content'><span class='card-title' id='status'>Processing...</span></div>
+      </div>
+    </div>
+  </div>
+  <div class='row'>
+    <div class='col s12 m6'>
+      <canvas id='timeChart' height='150'></canvas>
+    </div>
+    <div class='col s12 m6'>
+      <canvas id='speedChart' height='150'></canvas>
+    </div>
+  </div>
+  <script>
+    const timeChart = new Chart(document.getElementById('timeChart'), {
+      type: 'bar',
+      data: { 
+        labels: [], 
+        datasets: [{ 
+          label: 'Time (s)', 
+          data: [],
+          backgroundColor: 'rgba(54, 162, 235, 0.7)',
+          borderColor: 'rgba(54, 162, 235, 1)',
+          borderWidth: 1
+        }] 
+      },
+      options: { 
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { 
+          y: { 
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: 'Time (seconds)'
+            }
+          }
+        }
+      }
+    });
+    
+    const speedChart = new Chart(document.getElementById('speedChart'), {
+      type: 'bar',
+      data: { 
+        labels: [], 
+        datasets: [{ 
+          label: 'Speed-up', 
+          data: [],
+          backgroundColor: 'rgba(75, 192, 192, 0.7)',
+          borderColor: 'rgba(75, 192, 192, 1)',
+          borderWidth: 1
+        }] 
+      },
+      options: { 
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { 
+          y: { 
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: 'Speed-up Factor'
+            }
+          }
+        }
+      }
+    });
+    
+    // Simple polling function without counters
+    let hasProcessed = false;
+    
+    async function poll() {
+      try {
+        const res = await fetch('/status?key={{ key }}');
+        const data = await res.json();
+        
+        if (data.processed && !hasProcessed) {
+          hasProcessed = true;
+          document.getElementById('processed-img').src = '/image/' + encodeURIComponent(data.processed_key);
+          document.getElementById('processed-img').style.display = 'block';
+          document.getElementById('status').textContent = 'Processing complete';
+          
+          const threads = Object.keys(data.times).map(t => parseInt(t)).sort((a,b) => a-b);
+          const times = threads.map(t => data.times[t]);
+          
+          // Base time for speedup calculation
+          const base = times[0];
+          
+          // Update time chart
+          threads.forEach((t,i) => {
+            timeChart.data.labels.push(t.toString());
+            timeChart.data.datasets[0].data.push(times[i]);
+          });
+          timeChart.update();
+          
+          // Update speedup chart
+          threads.forEach((t,i) => {
+            speedChart.data.labels.push(t.toString());
+            speedChart.data.datasets[0].data.push(base / times[i]);
+          });
+          speedChart.update();
+          
+          clearInterval(timer);
+        }
+      } catch (err) {
+        console.error("Error polling:", err);
+      }
+    }
+    
+    // Poll every 2 seconds
+    const timer = setInterval(poll, 2000);
+    poll();  // Initial poll
+  </script>
+  {% endif %}
+</body>
+</html>
+"""
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    # Default values
+    threads_val = [1]
+    passes_val = 1
+    repeat_val = 1
+    
+    if request.method == 'POST':
+        try:
+            file = request.files['image']
+            if not file:
+                return 'No file provided', 400
+                
+            threads = [int(t) for t in request.form.getlist('threads')] or [1]
+            threads_val = threads
+            
+            try:
+                repeat = min(int(request.form.get('repeat') or '1'), 5)
+                repeat_val = repeat
+            except ValueError:
+                repeat = 1
+                
+            try:
+                passes = min(int(request.form.get('passes') or '1'), 10)
+                passes_val = passes
+            except ValueError:
+                passes = 1
+                
+            key = f"uploads/{uuid.uuid4().hex}_{file.filename}"
+            
+            try:
+                minio_client.put_object(
+                    BUCKET,
+                    key,
+                    file.stream,
+                    length=-1,
+                    part_size=10 * 1024 * 1024,
+                    content_type=file.content_type,
+                )
+            except Exception as e:
+                logger.error(f"Minio error: {e}")
+                return f"Error uploading file: {str(e)}", 500
+                
+            msg = {
+                'image_key': key,
+                'threads': threads,
+                'repeat': repeat,
+                'passes': passes,
+                'sent_ts': time.time()
+            }
+            
+            try:
+                channel.basic_publish(
+                    '', 
+                    'grayscale', 
+                    json.dumps(msg).encode(),
+                    properties=pika.BasicProperties(delivery_mode=2)  # Make message persistent
+                )
+                logger.info(f"Published message for {key}")
+            except Exception as e:
+                logger.error(f"RabbitMQ error: {e}")
+                return f"Error processing request: {str(e)}", 500
+                
+            return render_template_string(PAGE_TEMPLATE, key=key, threads_val=threads_val, passes_val=passes_val, repeat_val=repeat_val)
+            
+        except Exception as e:
+            logger.error(f"Request error: {e}")
+            return f"Error processing request: {str(e)}", 500
+            
+    return render_template_string(PAGE_TEMPLATE, key=None, threads_val=threads_val, passes_val=passes_val, repeat_val=repeat_val)
+
+@app.route('/status')
+def status():
+    key = request.args.get('key')
+    if not key:
+        return {'error': 'No key provided'}, 400
+        
+    with processed_lock:
+        info = PROCESSED.get(key)
+        
+    if not info:
+        return {'processed': False}
+        
+    resp = {'processed': True}
+    resp.update(info)
+    return resp
+
+@app.route('/image/<path:key>')
+def image(key):
+    try:
+        response = minio_client.get_object(BUCKET, key)
+        return send_file(io.BytesIO(response.read()), mimetype='image/png')
+    except Exception as e:
+        logger.error(f"Error retrieving image {key}: {e}")
+        return f"Error retrieving image: {str(e)}", 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, threaded=True)

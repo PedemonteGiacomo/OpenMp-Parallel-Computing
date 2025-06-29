@@ -1,0 +1,173 @@
+version: '3.8'
+services:
+  # Load Balancer for API Gateway
+  nginx_lb:
+    image: nginx:alpine
+    ports:
+      - "8000:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped
+    depends_on:
+      - api_gateway
+
+  # API Gateway instances (scalable)
+  api_gateway:
+    build: ./api_gateway
+    environment:
+      MINIO_ENDPOINT: minio_global:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      STORAGE_MODE: distributed
+    ports:
+      - "8000"
+      - "8090:8090"
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+      - minio_global
+
+  # Frontend that uses API Gateway
+  frontend_gateway:
+    build: ./frontend_gateway
+    environment:
+      API_GATEWAY_URL: http://nginx_lb
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    depends_on:
+      - nginx_lb
+
+  # RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: >-
+        -rabbit 
+        heartbeat 30
+        tcp_listen_options [{nodelay,true},{keepalive,true},{sndbuf,32768},{recbuf,32768}]
+        vm_memory_high_watermark 0.6
+      RABBITMQ_DISK_FREE_LIMIT: "1GB"
+      RABBITMQ_HIPE_COMPILE: "1"
+
+  # Distributed MinIO instances
+  minio_global:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_global_data:/data
+
+  minio_service1:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9010:9000"
+      - "9011:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_service1_data:/data
+
+  minio_service2:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9020:9000"
+      - "9021:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_service2_data:/data
+
+  # Processing Services with dedicated storage
+  grayscale_service:
+    build: ./grayscale_service
+    environment:
+      MINIO_ENDPOINT: minio_service1:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      STORAGE_MODE: distributed
+      GLOBAL_MINIO_ENDPOINT: minio_global:9000
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+      - minio_service1
+      - minio_global
+
+  # Future processing service example
+  sobel_service:
+    build: ./grayscale_service  # Reuse for now, can be replaced
+    environment:
+      MINIO_ENDPOINT: minio_service2:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      STORAGE_MODE: distributed
+      GLOBAL_MINIO_ENDPOINT: minio_global:9000
+      SERVICE_NAME: sobel  # Override service behavior
+    ports:
+      - "8002:8001"
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+      - minio_service2
+      - minio_global
+
+  # Service Scaler with distributed storage awareness
+  service_scaler:
+    build: ./service_scaler
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      COMPOSE_PROJECT: distributed-event-driven
+      SCALE_CHECK_INTERVAL: 30
+      MAX_INSTANCES: 5
+      MIN_INSTANCES: 1
+      GATEWAY_MAX_INSTANCES: 3
+      GATEWAY_MIN_INSTANCES: 1
+      STORAGE_MODE: distributed
+    ports:
+      - "8082:8080"
+      - "9090:9090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/app
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+    privileged: true
+
+  # Storage Synchronizer for distributed storage
+  storage_sync:
+    build: ./storage_sync
+    environment:
+      GLOBAL_MINIO_ENDPOINT: minio_global:9000
+      SERVICE1_MINIO_ENDPOINT: minio_service1:9000
+      SERVICE2_MINIO_ENDPOINT: minio_service2:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      SYNC_INTERVAL: 60  # Sync every minute
+    restart: unless-stopped
+    depends_on:
+      - minio_global
+      - minio_service1
+      - minio_service2
+
+volumes:
+  minio_global_data:
+  minio_service1_data:
+  minio_service2_data:

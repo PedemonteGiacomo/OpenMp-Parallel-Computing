@@ -284,9 +284,9 @@ PAGE_TEMPLATE = """
         }
 
         function displayResults(status) {
-            // Show the original image
-            if (status.original_image_url) {
-                document.getElementById('original-img').src = status.original_image_url;
+            // Show the original image (if available)
+            if (status.input_object) {
+                document.getElementById('original-img').src = `/api/v1/image/${currentRequestId}?type=input`;
             }
             
             // Show the processed image
@@ -303,59 +303,24 @@ PAGE_TEMPLATE = """
             M.Materialbox.init(document.querySelectorAll('.materialboxed'));
             
             // Display performance charts if available
-            if (status.times && Object.keys(status.times).length > 0) {
-                console.log('Performance data available:', status.times);
+            if (status.performance_data || status.times) {
                 displayCharts(status);
-            } else {
-                console.log('No performance data available in status:', status);
             }
         }
 
         function displayCharts(status) {
             // Extract performance data
-            const times = status.times || {};
-            console.log('Processing times data:', times);
-            
+            const times = status.times || status.performance_data?.times || {};
             const threads = Object.keys(times).map(t => parseInt(t)).sort((a,b) => a-b);
-            console.log('Thread counts:', threads);
             
-            if (threads.length === 0) {
-                console.log('No thread data available for charts');
-                return;
-            }
+            if (threads.length === 0) return;
             
-            // Prepare data for charts - handle both array and single value formats
-            const totalTimes = threads.map(t => {
-                const timeData = times[t.toString()];
-                if (timeData && typeof timeData === 'object') {
-                    // Handle object format: {total: [...], kernel: [...]} or {total: value, kernel: value}
-                    const totalTime = timeData.total;
-                    return Array.isArray(totalTime) ? totalTime[0] : totalTime;
-                } else {
-                    // Handle direct value format
-                    return timeData || 0;
-                }
-            });
-            
-            const kernelTimes = threads.map(t => {
-                const timeData = times[t.toString()];
-                if (timeData && typeof timeData === 'object' && timeData.kernel !== undefined) {
-                    const kernelTime = timeData.kernel;
-                    return Array.isArray(kernelTime) ? kernelTime[0] : kernelTime;
-                } else {
-                    return 0;
-                }
-            });
-            
-            console.log('Total times:', totalTimes);
-            console.log('Kernel times:', kernelTimes);
+            // Prepare data for charts
+            const totalTimes = threads.map(t => times[t].total || times[t] || 0);
+            const kernelTimes = threads.map(t => times[t].kernel || 0);
             
             // Create time chart
             const timeCtx = document.getElementById('timeChart').getContext('2d');
-            if (timeChart) {
-                timeChart.destroy(); // Destroy existing chart
-            }
-            
             timeChart = new Chart(timeCtx, {
                 type: 'bar',
                 data: {
@@ -376,7 +341,6 @@ PAGE_TEMPLATE = """
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: false,
                     scales: {
                         y: {
                             beginAtZero: true,
@@ -385,22 +349,12 @@ PAGE_TEMPLATE = """
                                 text: 'Time (ms)'
                             }
                         }
-                    },
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: 'Execution Time by Thread Count'
-                        }
                     }
                 }
             });
             
             // Create speedup chart
             const speedCtx = document.getElementById('speedChart').getContext('2d');
-            if (speedChart) {
-                speedChart.destroy(); // Destroy existing chart
-            }
-            
             const baseTotalTime = totalTimes[0] || 1;
             const baseKernelTime = kernelTimes[0] || 1;
             
@@ -416,20 +370,17 @@ PAGE_TEMPLATE = """
                         data: totalSpeedup,
                         borderColor: 'rgba(54, 162, 235, 1)',
                         backgroundColor: 'rgba(54, 162, 235, 0.1)',
-                        tension: 0.1,
-                        fill: false
+                        tension: 0.1
                     }, {
                         label: 'Kernel Speedup',
                         data: kernelSpeedup,
                         borderColor: 'rgba(255, 99, 132, 1)',
                         backgroundColor: 'rgba(255, 99, 132, 0.1)',
-                        tension: 0.1,
-                        fill: false
+                        tension: 0.1
                     }]
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: false,
                     scales: {
                         y: {
                             beginAtZero: true,
@@ -438,17 +389,9 @@ PAGE_TEMPLATE = """
                                 text: 'Speedup Factor'
                             }
                         }
-                    },
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: 'Speedup Factor by Thread Count'
-                        }
                     }
                 }
             });
-            
-            console.log('Charts created successfully');
         }
     </script>
 </body>

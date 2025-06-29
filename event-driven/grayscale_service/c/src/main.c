@@ -30,13 +30,20 @@ int main(int argc, char *argv[]) {
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
-    for (int p = 0; p < passes; ++p) {
+    // Use multi-pass function for better efficiency
+    if (passes > 1) {
+        convert_to_grayscale_multi_pass(img, width, height, channels, passes);
+    } else {
         convert_to_grayscale(img, width, height, channels);
     }
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
     double secs = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
-    printf("Compute kernel ×%d: %.4f s\n", passes, secs);
+    
+    // Get number of threads being used
+    int num_threads = omp_get_max_threads();
+    
+    printf("Compute kernel ×%d: %.4f s (threads: %d)\n", passes, secs, num_threads);
 
     if (!stbi_write_png(argv[2], width, height, channels, img, width * channels)) {
         fprintf(stderr, "Errore nel salvataggio\n");
